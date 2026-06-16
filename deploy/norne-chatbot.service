@@ -1,0 +1,26 @@
+# systemd unit for the Next.js app on the VPS.
+#
+# Secrets are NOT defined here — `next start` loads them from `.env.local` /
+# `.env.production` in WorkingDirectory. Edit WorkingDirectory, User, and PORT.
+#
+#   sudo cp deploy/norne-chatbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now norne-chatbot
+
+[Unit]
+Description=Norne Chatbot (Next.js)
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/norne-chatbot
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3000
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
