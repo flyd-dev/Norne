@@ -53,16 +53,37 @@ export function compactScalars(
   return out;
 }
 
-export function normalizeAccount(doc: FirestoreDoc): Record<string, unknown> {
-  return { id: doc.id, ...compactScalars(doc) };
+/** Matches internal id-like field names (id, *_id, *_uid). */
+const ID_FIELD = /(^id$)|(_id$)|(_uid$)/i;
+
+/** Remove internal id-like fields from a flat object. */
+function dropIdFields(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (!ID_FIELD.test(key)) out[key] = value;
+  }
+  return out;
 }
 
-export function normalizeProject(doc: FirestoreDoc): Record<string, unknown> {
-  return {
-    id: doc.id,
-    name: projectLabel(doc as ProjectLike),
-    ...compactScalars(doc),
-  };
+export function normalizeAccount(
+  doc: FirestoreDoc,
+  includeIds = true,
+): Record<string, unknown> {
+  const scalars = compactScalars(doc);
+  return includeIds ? { id: doc.id, ...scalars } : dropIdFields(scalars);
+}
+
+export function normalizeProject(
+  doc: FirestoreDoc,
+  includeIds = true,
+): Record<string, unknown> {
+  const name = projectLabel(doc as ProjectLike);
+  const scalars = compactScalars(doc);
+  // When ids are not requested, omit the document id and any *_id/*_uid fields so
+  // the model cannot surface internal identifiers in the answer.
+  return includeIds
+    ? { id: doc.id, name, ...scalars }
+    : { name, ...dropIdFields(scalars) };
 }
 
 export interface RowSummary {
@@ -85,10 +106,18 @@ function roundMoney(n: number): number {
  * compact summary: row count, per-field numeric totals, and a small sample.
  * This keeps token usage bounded regardless of how many rows exist.
  */
+export interface SummarizeOptions {
+  maxSample?: number;
+  /** Include row document ids in the sample (default true). */
+  includeIds?: boolean;
+}
+
 export function summarizeRows(
   rows: FirestoreDoc[],
-  maxSample: number = MAX_SAMPLE_ROWS,
+  options: SummarizeOptions = {},
 ): RowSummary {
+  const { maxSample = MAX_SAMPLE_ROWS, includeIds = true } = options;
+
   const totals: Record<string, number> = {};
   for (const row of rows) {
     for (const [key, value] of Object.entries(row)) {
@@ -102,10 +131,10 @@ export function summarizeRows(
     totals[key] = roundMoney(totals[key]);
   }
 
-  const sample = rows.slice(0, maxSample).map((row) => ({
-    id: row.id,
-    ...compactScalars(row),
-  }));
+  const sample = rows.slice(0, maxSample).map((row) => {
+    const scalars = compactScalars(row);
+    return includeIds ? { id: row.id, ...scalars } : dropIdFields(scalars);
+  });
 
   return {
     count: rows.length,

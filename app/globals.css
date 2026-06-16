@@ -6,13 +6,13 @@
   --ink-soft: #3a332b;
   --muted: #6f675d;
   --paper: #f4f0e8;
-  --bg: #f6f5f2;
+  --bg: #efece6;
   --panel: #ffffff;
-  --line: #e6e1d8;
-  --line-strong: #d6cfc2;
+  --line: #ece7de;
+  --line-strong: #d9d2c5;
   --user-bubble: #fdece5;
   --user-border: #f6c4ad;
-  --assistant-bubble: #f7f5f1;
+  --assistant-bubble: #f8f6f2;
   --warn-bg: #fff8e6;
   --warn-border: #f3d488;
   --warn-ink: #7a5b00;
@@ -20,7 +20,7 @@
   --error-border: #f1b3aa;
   --error-ink: #a32a17;
   --radius: 14px;
-  --shadow: 0 1px 2px rgba(22, 19, 15, 0.04), 0 8px 24px rgba(22, 19, 15, 0.06);
+  --shadow: 0 1px 2px rgba(22, 19, 15, 0.04), 0 18px 48px rgba(22, 19, 15, 0.08);
 }
 
 * {
@@ -39,24 +39,28 @@ body {
   font-size: 16px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ---------- Layout ---------- */
+/* ---------- App shell (one coherent surface) ---------- */
 .app {
-  display: flex;
-  flex-direction: column;
   height: 100dvh;
+  display: flex;
+  padding: 24px 16px;
 }
 
 .shell {
   width: 100%;
-  max-width: 880px;
+  max-width: 860px;
   margin: 0 auto;
-  flex: 1;
-  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 0 16px;
+  min-height: 0;
 }
 
 /* ---------- Header ---------- */
@@ -65,8 +69,9 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 4px 14px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .brand {
@@ -92,7 +97,7 @@ body {
 
 .brand h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: -0.3px;
   line-height: 1.2;
@@ -123,7 +128,7 @@ body {
 }
 
 .clear-btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -132,11 +137,12 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 4px;
+  padding: 18px 18px 8px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   scroll-behavior: smooth;
+  background: linear-gradient(180deg, #fcfbf9 0%, var(--panel) 120px);
 }
 
 .row {
@@ -152,21 +158,23 @@ body {
 }
 
 .bubble {
-  max-width: 86%;
-  padding: 12px 15px;
+  padding: 13px 16px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: var(--assistant-bubble);
-}
-
-.row.user .bubble {
-  background: var(--user-bubble);
-  border-color: var(--user-border);
-  border-bottom-right-radius: 4px;
 }
 
 .row.assistant .bubble {
+  width: 100%;
+  max-width: 720px;
+  background: var(--assistant-bubble);
   border-bottom-left-radius: 4px;
+}
+
+.row.user .bubble {
+  max-width: 560px;
+  background: var(--user-bubble);
+  border-color: var(--user-border);
+  border-bottom-right-radius: 4px;
 }
 
 .role {
@@ -179,19 +187,31 @@ body {
 }
 
 /* Rich answer rendering */
+.answer {
+  font-size: 15.5px;
+  line-height: 1.62;
+  color: var(--ink);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
 .answer p {
-  margin: 0 0 8px;
+  margin: 0 0 9px;
 }
 .answer p:last-child {
   margin-bottom: 0;
 }
 .answer ul,
 .answer ol {
-  margin: 4px 0 8px;
+  margin: 6px 0 9px;
   padding-left: 22px;
 }
+.answer ul:last-child,
+.answer ol:last-child {
+  margin-bottom: 0;
+}
 .answer li {
-  margin: 2px 0;
+  margin: 3px 0;
+  padding-left: 2px;
 }
 
 /* ---------- Warnings ---------- */
@@ -285,7 +305,6 @@ body {
   gap: 8px;
   color: var(--muted);
   font-size: 14px;
-  padding: 4px 2px;
 }
 
 .dots {
@@ -341,21 +360,22 @@ body {
 .empty {
   margin: auto;
   text-align: center;
-  max-width: 560px;
+  max-width: 580px;
   color: var(--muted);
-  padding: 24px 8px;
+  padding: 20px 8px;
 }
 
 .empty h2 {
   margin: 0 0 6px;
-  font-size: 20px;
+  font-size: 21px;
   color: var(--ink);
   font-weight: 700;
+  letter-spacing: -0.3px;
 }
 
 .empty p {
   margin: 0 0 18px;
-  font-size: 14px;
+  font-size: 14.5px;
 }
 
 .chips {
@@ -369,11 +389,11 @@ body {
   background: var(--panel);
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  padding: 9px 14px;
+  padding: 9px 15px;
   font-size: 13.5px;
   color: var(--ink-soft);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, transform 0.05s;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, transform 0.05s;
 }
 
 .chip:hover {
@@ -386,10 +406,11 @@ body {
   transform: translateY(1px);
 }
 
-/* ---------- Composer ---------- */
+/* ---------- Composer (anchored at bottom of the card) ---------- */
 .composer-wrap {
   border-top: 1px solid var(--line);
-  padding: 12px 4px 8px;
+  background: var(--panel);
+  padding: 12px 18px 10px;
 }
 
 .composer {
@@ -397,14 +418,15 @@ body {
   align-items: flex-end;
   gap: 10px;
   background: var(--panel);
-  border: 1px solid var(--line-strong);
+  border: 1.5px solid var(--line-strong);
   border-radius: var(--radius);
-  padding: 8px 8px 8px 12px;
-  box-shadow: var(--shadow);
+  padding: 8px 8px 8px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .composer:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(242, 84, 27, 0.12);
 }
 
 .composer textarea {
@@ -432,40 +454,63 @@ body {
   color: #fff;
   border: none;
   border-radius: 10px;
-  padding: 10px 18px;
+  padding: 10px 20px;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.05s;
 }
 
 .send-btn:hover:not(:disabled) {
   background: var(--accent-deep);
 }
 
+.send-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .send-btn:disabled {
-  opacity: 0.45;
+  background: #e3ded5;
+  color: #a89f93;
   cursor: not-allowed;
 }
 
 .disclaimer {
-  margin: 8px 2px 4px;
+  margin: 8px 2px 2px;
   font-size: 11.5px;
   color: var(--muted);
   text-align: center;
 }
 
-@media (max-width: 600px) {
-  .shell {
-    padding: 0 10px;
+/* ---------- Responsive ---------- */
+@media (max-width: 640px) {
+  .app {
+    padding: 0;
   }
-  .bubble {
-    max-width: 92%;
+  .shell {
+    max-width: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .messages {
+    padding: 14px 12px 6px;
+  }
+  .header,
+  .composer-wrap {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .row.assistant .bubble {
+    max-width: 100%;
+  }
+  .row.user .bubble {
+    max-width: 88%;
   }
   .brand p {
     font-size: 12px;
   }
   .send-btn {
-    padding: 10px 14px;
+    padding: 10px 15px;
   }
 }

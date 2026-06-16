@@ -112,6 +112,29 @@ describe("runChat — collection tracking", () => {
     );
   });
 
+  it("instructs the model to use names/numbers and hide ids unless asked", async () => {
+    await runChat("Hvilke prosjekter finnes?", "req");
+    const sys = cap.inputs.at(-1)!.systemPrompt;
+    // Project lists should show name + number.
+    expect(sys).toMatch(/vis prosjektnavn og prosjektnummer/i);
+    // Internal document ids hidden unless explicitly requested.
+    expect(sys).toMatch(/Ikke vis interne dokument-ID-er.*med mindre brukeren/is);
+  });
+
+  it("omits internal document ids from context but keeps name + number", async () => {
+    await runChat("Hvilke prosjekter finnes?", "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).not.toContain("P_AAA111"); // internal id must not leak
+    expect(userPrompt).toContain("Pilestredet"); // name present
+    expect(userPrompt).toContain("7100"); // project number present
+  });
+
+  it("includes ids in context only when the user explicitly asks for id", async () => {
+    await runChat("Hvilke prosjekter finnes? Vis prosjekt-id.", "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).toContain("P_AAA111");
+  });
+
   it("returns the same response shape regardless of provider", async () => {
     const r = await runChat("Hvilke prosjekter finnes?", "req");
     expect(r).toEqual(

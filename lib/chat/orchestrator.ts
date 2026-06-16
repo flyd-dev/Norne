@@ -36,6 +36,10 @@ import { logChatResolved } from "@/lib/logger";
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
 
+/** Matches when the user explicitly asks for internal ids. */
+const WANTS_IDS =
+  /\b(id|ids|uid|prosjekt[\s-]?id|prosjektid|dokument[\s-]?id|dokumentid|document[\s-]?id)\b/i;
+
 export interface ChatDataUsed {
   /** Firestore collection paths the answer is based on. */
   firestoreCollections: string[];
@@ -60,6 +64,11 @@ export async function runChat(
 ): Promise<ChatResult> {
   const intent = detectIntent(message);
 
+  // Only include internal document ids in the model context when the user
+  // explicitly asks for an id; otherwise they are kept out of the answer entirely
+  // (ids still live in dataUsed/sources collection paths for internal use).
+  const includeIds = WANTS_IDS.test(message);
+
   const firestoreCollections: string[] = [];
   const warnings: string[] = [];
   const context: ContextBlock = {};
@@ -68,7 +77,9 @@ export async function runChat(
   // --- Accounts -------------------------------------------------------------
   if (intent.topics.includes("accounts")) {
     const accounts = await getAccounts();
-    context.accounts = accounts.slice(0, MAX_ITEMS_PER_SOURCE).map(normalizeAccount);
+    context.accounts = accounts
+      .slice(0, MAX_ITEMS_PER_SOURCE)
+      .map((d) => normalizeAccount(d, includeIds));
     firestoreCollections.push(COLLECTIONS.accounts);
     if (accounts.length > MAX_ITEMS_PER_SOURCE) {
       warnings.push(
@@ -89,7 +100,7 @@ export async function runChat(
     if (intent.topics.includes("projects")) {
       context.projects = projects
         .slice(0, MAX_ITEMS_PER_SOURCE)
-        .map(normalizeProject);
+        .map((d) => normalizeProject(d, includeIds));
       if (projects.length > MAX_ITEMS_PER_SOURCE) {
         warnings.push(
           `Viser kun ${MAX_ITEMS_PER_SOURCE} av ${projects.length} prosjekter.`,
@@ -110,15 +121,17 @@ export async function runChat(
       if (!context.projects) {
         context.projects = projects
           .slice(0, MAX_ITEMS_PER_SOURCE)
-          .map(normalizeProject);
+          .map((d) => normalizeProject(d, includeIds));
       }
     } else {
       const { projectId } = resolution;
+      // Include projectId in context only when the user asked for ids.
+      const idBlock = includeIds ? { projectId } : {};
 
       if (intent.topics.includes("budgetLines")) {
         const rows = await getBudgetLines(projectId);
-        const summary = summarizeRows(rows);
-        context.budget_lines = { projectId, ...summary };
+        const summary = summarizeRows(rows, { includeIds });
+        context.budget_lines = { ...idBlock, ...summary };
         firestoreCollections.push(COLLECTIONS.budgetLines(projectId));
         if (summary.truncated) {
           warnings.push(
@@ -129,8 +142,8 @@ export async function runChat(
 
       if (intent.topics.includes("quantities")) {
         const rows = await getQuantities(projectId);
-        const summary = summarizeRows(rows);
-        context.quantities = { projectId, ...summary };
+        const summary = summarizeRows(rows, { includeIds });
+        context.quantities = { ...idBlock, ...summary };
         firestoreCollections.push(COLLECTIONS.quantities(projectId));
         if (summary.truncated) {
           warnings.push(
