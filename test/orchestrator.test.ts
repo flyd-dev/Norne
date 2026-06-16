@@ -99,6 +99,19 @@ describe("runChat — collection tracking", () => {
     expect(sys).toMatch(/Ikke finn på fakta/i);
   });
 
+  it("instructs the model not to add unsupported conclusions to list answers", async () => {
+    await runChat("Hvilke prosjekter finnes?", "req");
+    const sys = cap.inputs.at(-1)!.systemPrompt;
+    // No inferring status/contract value/activity unless explicitly in context.
+    expect(sys).toMatch(/Ikke utled eller anta status, kontraktsverdi/i);
+    // List questions: only list items/fields present in context.
+    expect(sys).toMatch(/For listespørsmål/i);
+    // No trailing generic summaries.
+    expect(sys).toContain(
+      "Ikke avslutt med generelle oppsummeringer som ikke direkte støttes av konteksten.",
+    );
+  });
+
   it("returns the same response shape regardless of provider", async () => {
     const r = await runChat("Hvilke prosjekter finnes?", "req");
     expect(r).toEqual(
