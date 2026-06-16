@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Norne — intern assistent",
-  description: "Intern chatbot for spørsmål om prosjekter, kontoer og budsjett.",
+  title: "Norne Assistent",
+  description:
+    "Intern prosjektassistent — spør om prosjekter, budsjettlinjer og mengder.",
 };
 
 export default function RootLayout({
