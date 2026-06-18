@@ -108,7 +108,7 @@ const COLUMN_MATCHERS: { field: keyof StructuredColumns; re: RegExp }[] = [
   { field: "availableHours", re: /(tilgjengelig|ledig|disponibel|kapasitet|available|free)/i },
   { field: "assignedHours", re: /(tildelt|planlagt|brukt|allokert|booket|assigned|allocated|planned)/i },
   { field: "month", re: /(m(å|a)ned|måned|dato|uke|periode|month|date|week|period)/i },
-  { field: "role", re: /(fag|rolle|stilling|disiplin|trade|role|discipline)/i },
+  { field: "role", re: /(arbeidstype|arbeidskategori|fag|rolle|stilling|disiplin|trade|role|discipline)/i },
   { field: "person", re: /(navn|person|ressurs|ansatt|montør|name|employee|resource)/i },
 ];
 
