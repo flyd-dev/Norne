@@ -54,6 +54,8 @@ import {
   readStructuredAvailability,
   type StructuredAvailability,
 } from "@/lib/chat/capacityStructured";
+import { getEndreClient } from "@/lib/endre/client";
+import { buildEndreProjectContext } from "@/lib/chat/endreSource";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -155,10 +157,37 @@ export async function runChat(
     }
   }
 
+  // --- Optional Endre live data (project questions) -------------------------
+  // For project-summary questions, prefer live Endre data when the integration
+  // is enabled AND credentials are configured (getEndreClient enforces both;
+  // it returns null otherwise, so no Endre call is ever made). Any failure or a
+  // missing project returns null and we fall through to Firebase/documents.
+  const endreSources: string[] = [];
+  let endreHandledProjects = false;
+  if (decision.route === "project_summary") {
+    const endreClient = getEndreClient();
+    if (endreClient) {
+      const endre = await buildEndreProjectContext(message, endreClient);
+      if (endre) {
+        Object.assign(context, endre.context);
+        endreSources.push(...endre.sources);
+        endreHandledProjects = true;
+        notes.push(
+          "Prosjektdataene i feltene «endre_project»/«endre_projects» kommer fra " +
+            "Endre (live prosjektsystem) og er den foretrukne kilden for dette " +
+            "spørsmålet. Svar ut fra disse. Ikke gjengi rå felter eller id-er.",
+        );
+      }
+    }
+  }
+
   // We need the projects list to answer project questions OR to resolve a
-  // project for budget lines / quantities.
+  // project for budget lines / quantities. When Endre already answered the
+  // project question, skip the Firestore project fetch (Endre is preferred).
   let projects: FirestoreDoc[] = [];
-  const needProjectsList = intent.topics.includes("projects") || intent.needsProject;
+  const needProjectsList =
+    !endreHandledProjects &&
+    (intent.topics.includes("projects") || intent.needsProject);
   if (needProjectsList) {
     projects = await getProjects();
     // The projects collection was actually queried (to list and/or to resolve a
@@ -344,7 +373,11 @@ export async function runChat(
   notes.push(decision.answerFormat);
 
   // --- Logging (safe: ids/route/intent/collections only) -------------------
-  logChatResolved(requestId, [decision.route, ...intent.topics], firestoreCollections);
+  // endreSources are capability labels only ("Endre API: …") — no payloads/ids.
+  logChatResolved(requestId, [decision.route, ...intent.topics], [
+    ...firestoreCollections,
+    ...endreSources,
+  ]);
 
   // --- Ask the model (via the pluggable provider) --------------------------
   const contextJson = JSON.stringify(context, null, 2);
@@ -360,8 +393,9 @@ export async function runChat(
 
   const answer = raw.trim() || "Jeg har ikke nok informasjon til å svare på det.";
 
-  // Sources: Firestore collection paths plus the document names used.
-  const sources = [...firestoreCollections, ...documentNames];
+  // Sources: Firestore collection paths, document names, and any Endre
+  // capabilities used — each clearly marked so the answer cites its origin.
+  const sources = [...firestoreCollections, ...documentNames, ...endreSources];
 
   return {
     answer,
