@@ -27,6 +27,7 @@ import {
   summarizeRows,
 } from "@/lib/firestore/normalize";
 import { detectIntent } from "@/lib/chat/intent";
+import { rankAccounts } from "@/lib/chat/accountLookup";
 import { resolveProject } from "@/lib/chat/projectResolver";
 import { searchDocuments } from "@/lib/rag/documentSearch";
 import type { DocumentReference } from "@/lib/documents/types";
@@ -36,6 +37,9 @@ import { logChatResolved } from "@/lib/logger";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
+
+/** Max accounts sent for an account-lookup question (top relevant only). */
+const MAX_LOOKUP_ACCOUNTS = 12;
 
 /** Matches when the user explicitly asks for internal ids. */
 const WANTS_IDS =
@@ -78,14 +82,35 @@ export async function runChat(
   // --- Accounts -------------------------------------------------------------
   if (intent.topics.includes("accounts")) {
     const accounts = await getAccounts();
-    context.accounts = accounts
-      .slice(0, MAX_ITEMS_PER_SOURCE)
-      .map((d) => normalizeAccount(d, includeIds));
     firestoreCollections.push(COLLECTIONS.accounts);
-    if (accounts.length > MAX_ITEMS_PER_SOURCE) {
-      warnings.push(
-        `Viser kun ${MAX_ITEMS_PER_SOURCE} av ${accounts.length} kontoer.`,
+
+    if (intent.accountLookup) {
+      // Posting question ("Hva fører jeg X på?"): send only the accounts most
+      // relevant to the expanded search terms, never the whole chart. The model
+      // is told to suggest the closest match (and never invent a number).
+      const ranked = rankAccounts(
+        accounts,
+        intent.searchTerms,
+        MAX_LOOKUP_ACCOUNTS,
       );
+      const picked = ranked.length > 0 ? ranked.map((r) => r.account) : accounts;
+      context.accounts = picked
+        .slice(0, MAX_LOOKUP_ACCOUNTS)
+        .map((d) => normalizeAccount(d, includeIds));
+      if (ranked.length === 0 && accounts.length > MAX_LOOKUP_ACCOUNTS) {
+        warnings.push(
+          `Fant ingen konto som matcher «${intent.lookupSubject}» direkte; viser et utvalg kontoer.`,
+        );
+      }
+    } else {
+      context.accounts = accounts
+        .slice(0, MAX_ITEMS_PER_SOURCE)
+        .map((d) => normalizeAccount(d, includeIds));
+      if (accounts.length > MAX_ITEMS_PER_SOURCE) {
+        warnings.push(
+          `Viser kun ${MAX_ITEMS_PER_SOURCE} av ${accounts.length} kontoer.`,
+        );
+      }
     }
   }
 
@@ -156,7 +181,16 @@ export async function runChat(
   }
 
   // --- Document / RAG search -----------------------------------------------
-  const matches = await searchDocuments(message);
+  // For account-posting questions, expand the query with related accounting
+  // terms (synonyms + category words) and an anchor toward the chart of accounts,
+  // so the closest matching account is found even when the exact word is absent.
+  let searchQuery = message;
+  if (intent.accountLookup) {
+    searchQuery = [message, ...intent.searchTerms, "kontoplan", "konto"].join(
+      " ",
+    );
+  }
+  const matches = await searchDocuments(searchQuery);
   if (matches.length > 0) {
     // The model sees chunk text; the client only gets compact references.
     context.documents = matches.map((m) => ({
@@ -175,6 +209,17 @@ export async function runChat(
     chunkIndex: m.chunkIndex,
   }));
   const documentNames = [...new Set(matches.map((m) => m.documentName))];
+
+  // For account-posting questions, steer the model toward a concrete account
+  // answer (closest match if the exact term is missing) rather than a summary.
+  if (intent.accountLookup && !note) {
+    note =
+      `Brukeren spør hva «${intent.lookupSubject}» skal føres på. ` +
+      `Finn den/de best passende kontoen(e) i kontoplanen eller konto-dataene over. ` +
+      `Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. ` +
+      `Finnes ikke «${intent.lookupSubject}» eksakt, si det tydelig og foreslå nærmeste relevante konto. ` +
+      `Ikke ta med prosjektoppsummeringer.`;
+  }
 
   // --- Logging (safe: ids/intent/collections only) -------------------------
   logChatResolved(requestId, intent.topics, firestoreCollections);

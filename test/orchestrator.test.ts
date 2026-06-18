@@ -208,4 +208,59 @@ describe("runChat — collection tracking", () => {
     expect(sys).toMatch(/opplastet dokument/i);
     expect(sys).toMatch(/inkonsistent/i);
   });
+
+  it("system prompt forbids explaining raw JSON/context", async () => {
+    await runChat("Hvilke prosjekter finnes?", "req");
+    const sys = cap.inputs.at(-1)!.systemPrompt;
+    expect(sys).toMatch(/Forklar aldri den rå konteksten/i);
+    expect(sys).toMatch(/JSON/);
+  });
+});
+
+describe("runChat — account-lookup questions", () => {
+  beforeEach(() => {
+    mAccounts.mockResolvedValue([
+      { id: "a1", number: "4000", name: "Varekjøp" },
+      { id: "a2", number: "6570", name: "Driftsmateriell og verneutstyr" },
+      { id: "a3", number: "7140", name: "Reisekostnad" },
+    ]);
+  });
+
+  it("treats 'Hva fører jeg arbeidshansker på?' as an account lookup", async () => {
+    const r = await runChat("Hva fører jeg arbeidshansker på?", "req");
+    // Accounts collection is used...
+    expect(r.dataUsed.firestoreCollections).toContain("accounts");
+    // ...and projects are NOT pulled in for an account question.
+    expect(r.dataUsed.firestoreCollections).not.toContain("projects");
+    expect(mProjects).not.toHaveBeenCalled();
+  });
+
+  it("sends only the relevant accounts, not the whole chart", async () => {
+    await runChat("Hva fører jeg arbeidshansker på?", "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    // The matching verneutstyr account is included...
+    expect(userPrompt).toContain("6570");
+    expect(userPrompt).toContain("verneutstyr");
+    // ...unrelated accounts are filtered out.
+    expect(userPrompt).not.toContain("Reisekostnad");
+  });
+
+  it("instructs the model not to invent account numbers", async () => {
+    await runChat("Hva fører jeg arbeidshansker på?", "req");
+    const last = cap.inputs.at(-1)!;
+    // Both the system prompt and the per-question note forbid invention.
+    expect(last.systemPrompt).toMatch(/aldri finn på et kontonummer/i);
+    expect(last.userPrompt).toMatch(/aldri finn på et kontonummer/i);
+    // Only account numbers that exist in context appear in the prompt; no
+    // fabricated numbers are introduced by the pipeline.
+    expect(last.userPrompt).not.toContain("9999");
+  });
+
+  it("account-lookup answers do not include project context", async () => {
+    await runChat("Hvilken konto bruker jeg for arbeidshansker?", "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).not.toContain("Pilestredet");
+    expect(userPrompt).not.toContain("Skaidi");
+    expect(userPrompt).not.toContain('"projects"');
+  });
 });

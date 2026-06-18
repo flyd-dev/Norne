@@ -7,6 +7,8 @@
  * whatever data we retrieve.
  */
 
+import { detectAccountLookup } from "@/lib/chat/accountLookup";
+
 export type Topic = "accounts" | "projects" | "budgetLines" | "quantities";
 
 const KEYWORDS: Record<Topic, RegExp> = {
@@ -28,6 +30,12 @@ export interface DetectedIntent {
   needsProject: boolean;
   /** A project id explicitly present in the message, if any. */
   explicitProjectId: string | null;
+  /** True when the user is asking which account to post something on. */
+  accountLookup: boolean;
+  /** The thing being posted (X in "Hva fører jeg X på?"), if a lookup. */
+  lookupSubject: string | null;
+  /** Subject + related accounting terms to drive document/account search. */
+  searchTerms: string[];
 }
 
 /**
@@ -40,13 +48,21 @@ function extractExplicitProjectId(message: string): string | null {
 }
 
 export function detectIntent(message: string): DetectedIntent {
+  const lookup = detectAccountLookup(message);
+
   const topics: Topic[] = [];
   for (const topic of Object.keys(KEYWORDS) as Topic[]) {
     if (KEYWORDS[topic].test(message)) topics.push(topic);
   }
 
-  // If nothing matched, default to projects + accounts as the broad overview.
-  if (topics.length === 0) {
+  if (lookup.isLookup) {
+    // "Hva fører jeg X på?" is always an accounts question, but the subject (X)
+    // rarely contains the word "konto" — so force the accounts topic. Do NOT pull
+    // in projects unless the user clearly asked about a project; an account
+    // lookup should not drag in unrelated project summaries.
+    if (!topics.includes("accounts")) topics.push("accounts");
+  } else if (topics.length === 0) {
+    // If nothing matched, default to projects + accounts as the broad overview.
     topics.push("projects", "accounts");
   }
 
@@ -57,6 +73,9 @@ export function detectIntent(message: string): DetectedIntent {
     topics,
     needsProject,
     explicitProjectId: extractExplicitProjectId(message),
+    accountLookup: lookup.isLookup,
+    lookupSubject: lookup.subject,
+    searchTerms: lookup.expandedTerms,
   };
 }
 

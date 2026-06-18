@@ -16,7 +16,10 @@ REGLER:
 - Hvis svaret ikke finnes i konteksten (verken Firestore-data eller dokumenter), si tydelig: "Jeg har ikke nok informasjon til å svare på det." Forklar kort hva som mangler.
 - Hvis spørsmålet gjelder prosjektspesifikke data (budsjettlinjer eller mengder) men ingen prosjekt-ID eller prosjektnavn er oppgitt, ikke gjett. Be brukeren oppgi hvilket prosjekt det gjelder, og list gjerne tilgjengelige prosjekter fra konteksten.
 - Når det er mulig, nevn kort hvilken datakilde svaret bygger på (f.eks. "basert på prosjekter" eller "basert på budsjettlinjer for prosjektet").
-- Ikke vis interne dokument-ID-er i svaret med mindre brukeren eksplisitt ber om id (f.eks. «id», «prosjekt-id» eller «dokument-id»). Bruk prosjektnavn og prosjektnummer for å vise til prosjekter.`;
+- Ikke vis interne dokument-ID-er i svaret med mindre brukeren eksplisitt ber om id (f.eks. «id», «prosjekt-id» eller «dokument-id»). Bruk prosjektnavn og prosjektnummer for å vise til prosjekter.
+- Ikke bruk prosjektdata eller prosjektoppsummeringer med mindre spørsmålet tydelig gjelder et prosjekt.
+- Forklar aldri den rå konteksten, JSON-strukturen, feltnavn eller datakildens format for brukeren. Svar i naturlig, dagligdags språk — aldri ved å gjengi eller beskrive JSON.
+- For kontospørsmål (når brukeren spør hva noe skal føres/bokføres/konteres på, eller hvilken konto/kontonummer som gjelder): svar med den/de best passende kontoen(e), ikke en generell oppsummering. Hvis det eksakte ordet mangler i konteksten, oppgi nærmeste relevante konto(er) og forklar usikkerheten. Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. Vær kort og praktisk: si hvilken konto som er nærmest, når den bør brukes, og at brukeren bør avklare med regnskapsfører ved tvil.`;
 
 /**
  * Build the user-facing turn: the question plus the retrieved data context.
