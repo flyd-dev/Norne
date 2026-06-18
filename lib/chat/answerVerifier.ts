@@ -150,6 +150,48 @@ export function guardContractValue(input: ContractGuardInput): ContractGuardResu
   };
 }
 
+/** A figure stated in hours ("31,5 timer", "1 200 timer"). */
+const HOURS_FIGURE_RE = /\d[\d   .,]*\s*timer\b/i;
+
+/** True when the answer presents a concrete hours figure. */
+export function presentsHoursFigure(answer: string): boolean {
+  return HOURS_FIGURE_RE.test(answer);
+}
+
+export interface CapacityGuardInput {
+  /** True when the capacity tool returned coverage "none" for this turn. */
+  coverageNone: boolean;
+  answer: string;
+}
+
+export interface CapacityGuardResult {
+  triggered: boolean;
+  replacement?: string;
+  reason?: string;
+}
+
+/**
+ * Stop a capacity answer from inventing hours when the tool found no capacity
+ * data at all (coverage "none"). If the draft nonetheless states an hours figure,
+ * it was fabricated — replace it with an honest "no capacity data" response.
+ * Never fires when the tool DID return data (full/partial), so a real per-fag
+ * answer is untouched.
+ */
+export function guardUnsupportedCapacity(
+  input: CapacityGuardInput,
+): CapacityGuardResult {
+  if (!input.coverageNone) return { triggered: false };
+  if (!presentsHoursFigure(input.answer)) return { triggered: false };
+  return {
+    triggered: true,
+    reason: "capacity_unverified",
+    replacement:
+      "Jeg finner ikke tilgjengelig kapasitet (timer per fag) for den etterspurte " +
+      "perioden i bemanningsplanen. Last opp riktig bemanningsplan, eller oppgi " +
+      "perioden på nytt, så regner jeg på det — jeg gjetter ikke på tall.",
+  };
+}
+
 /** Maps a route-excluded SourceKind to the source label it appears as. */
 const SOURCE_LABELS: Partial<Record<SourceKind, string>> = {
   accounts: "accounts",

@@ -68,6 +68,7 @@ import {
   verifyAnswer,
   pruneSources,
   guardContractValue,
+  guardUnsupportedCapacity,
 } from "@/lib/chat/answerVerifier";
 import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
 import {
@@ -1084,6 +1085,21 @@ export async function runChat(
       answer = guard.replacement;
       verifierAction = "contract_value_guard";
       if (guard.reason) fallbackReasons.push(guard.reason);
+    }
+  }
+
+  // Capacity guard: when the capacity tool found NO data (coverage "none") but the
+  // draft still states an hours figure, it was invented — replace with an honest
+  // "no capacity data" answer. Never fires when the tool returned data.
+  const capacityCoverageNone = toolRuns.some(
+    (t) => t.tool === "getMonthlyCapacity" && t.coverage === "none",
+  );
+  if (capacityCoverageNone) {
+    const capGuard = guardUnsupportedCapacity({ coverageNone: true, answer });
+    if (capGuard.triggered && capGuard.replacement) {
+      answer = capGuard.replacement;
+      verifierAction = "capacity_guard";
+      if (capGuard.reason) fallbackReasons.push(capGuard.reason);
     }
   }
 
