@@ -231,7 +231,8 @@ export default function Chat() {
             </div>
             <div>
               <h1>Norne Assistent</h1>
-              <p>Spør om prosjekter, budsjettlinjer og mengder</p>
+              <p>Spør om prosjekter, dokumenter, budsjettlinjer og mengder.</p>
+              <p className="brandline">Robust. Presis. Tilstede.</p>
             </div>
           </div>
           <button
@@ -247,7 +248,7 @@ export default function Chat() {
         <div className="messages" ref={listRef} aria-live="polite">
           {isEmpty && (
             <div className="empty">
-              <h2>Hei 👋</h2>
+              <h2>Norne Assistent</h2>
               <p>Still et spørsmål for å komme i gang, eller velg et eksempel:</p>
               <div className="chips">
                 {EXAMPLES.map((q) => (
@@ -387,8 +388,8 @@ export default function Chat() {
             </button>
           </div>
           <p className="disclaimer">
-            Svar baseres på tilgjengelige prosjektdata. Ikke del sensitive
-            opplysninger i chatten.
+            Svar baseres på tilgjengelige prosjektdata og opplastede dokumenter.
+            Ikke del sensitive opplysninger i chatten.
           </p>
         </div>
       </div>
