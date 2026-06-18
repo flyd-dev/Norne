@@ -18,6 +18,7 @@ import type { DetectedIntent } from "@/lib/chat/intent";
 import { expandGlossaryTerms } from "@/lib/chat/domainGlossary";
 
 export type Route =
+  | "capabilities_help"
   | "account_lookup"
   | "project_summary"
   | "budget_lines"

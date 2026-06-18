@@ -90,6 +90,8 @@ export function logChatPlan(
     answerFound: boolean;
     deterministicAnswerUsed: boolean;
     fallbackReasons: string[];
+    /** What the answer verifier did: "none" | "passed" | "replaced_deterministic". */
+    verifierAction?: string;
   },
 ): void {
   emit("log", { evt: "chat_plan", requestId, ...info });

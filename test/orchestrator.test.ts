@@ -56,6 +56,7 @@ vi.mock("@/lib/rag/documentSearch", () => ({
 }));
 
 import { runChat } from "@/lib/chat/orchestrator";
+import { CAPABILITIES_ANSWER } from "@/lib/chat/capabilities";
 import {
   getAccounts,
   getBudgetLines,
@@ -85,6 +86,38 @@ beforeEach(() => {
     { id: "b2", cost: 250 },
   ]);
   mQty.mockResolvedValue([{ id: "q1", amount: 5 }]);
+});
+
+describe("runChat — meta/capabilities short-circuit", () => {
+  it("answers 'Hva kan du gjøre?' deterministically without any retrieval", async () => {
+    const r = await runChat("Hva kan du gjøre?", "req");
+    expect(r.route).toBe("capabilities_help");
+    expect(r.answer).toBe(CAPABILITIES_ANSWER);
+    // No data sources, no warnings, no documents.
+    expect(r.sources).toEqual([]);
+    expect(r.warnings).toEqual([]);
+    expect(r.dataUsed.firestoreCollections).toEqual([]);
+    expect(r.dataUsed.documents).toEqual([]);
+    // Nothing was fetched and the LLM was never called.
+    expect(mProjects).not.toHaveBeenCalled();
+    expect(mAccounts).not.toHaveBeenCalled();
+    expect(searchCalls.args.length).toBe(0);
+    expect(cap.inputs.length).toBe(0);
+    expect(r.diagnostics?.intent).toBe("capabilities_help");
+  });
+
+  it("does not inherit history for a meta question", async () => {
+    const r = await runChat("Hjelp", "req", [
+      { role: "user", content: "Oppsummer prosjekt 7100" },
+      {
+        role: "assistant",
+        content: "Prosjektnavn: Pilestredet\nKontraktsverdi: 150 705 668 kr",
+      },
+    ]);
+    expect(r.route).toBe("capabilities_help");
+    expect(r.diagnostics?.resolvedProjectNumber).toBeNull();
+    expect(cap.inputs.length).toBe(0);
+  });
 });
 
 describe("runChat — collection tracking", () => {

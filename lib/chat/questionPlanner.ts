@@ -23,6 +23,7 @@ import {
 import type { HistoryMessage } from "@/lib/chat/historyFacts";
 
 export type PlanIntent =
+  | "capabilities_help"
   | "project_summary"
   | "project_metric"
   | "account_lookup"

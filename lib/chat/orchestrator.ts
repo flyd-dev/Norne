@@ -69,6 +69,10 @@ import {
   buildEndreProjectContext,
   type EndreDiagnostics,
 } from "@/lib/chat/endreSource";
+import {
+  CAPABILITIES_ANSWER,
+  isCapabilitiesQuestion,
+} from "@/lib/chat/capabilities";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -99,6 +103,8 @@ export interface ChatDiagnostics {
   answerFound: boolean;
   deterministicAnswerUsed: boolean;
   fallbackReasons: string[];
+  /** What the answer verifier did: "none" | "passed" | "replaced_deterministic". */
+  verifierAction: string;
 }
 
 export interface ChatResult {
@@ -121,6 +127,37 @@ export async function runChat(
   requestId: string,
   history: ChatHistoryMessage[] = [],
 ): Promise<ChatResult> {
+  // --- Early meta / capabilities gate (runs FIRST, before any retrieval) -----
+  // A "Hva kan du gjøre?"-style question is about the assistant itself, not about
+  // company data. Answer deterministically and short-circuit: no follow-up
+  // resolution, no history inheritance, no Endre/Firestore/accounts/documents,
+  // no sources, no warnings. This is what stops a meta question from being
+  // mishandled as a project/account lookup.
+  if (isCapabilitiesQuestion(message)) {
+    const diagnostics: ChatDiagnostics = {
+      intent: "capabilities_help",
+      resolvedProjectNumber: null,
+      resolvedProjectName: null,
+      resolvedMetric: null,
+      confidence: "high",
+      selectedSources: [],
+      checkedSources: [],
+      answerFound: true,
+      deterministicAnswerUsed: true,
+      fallbackReasons: [],
+      verifierAction: "none",
+    };
+    logChatPlan(requestId, diagnostics);
+    return {
+      answer: CAPABILITIES_ANSWER,
+      sources: [],
+      dataUsed: { firestoreCollections: [], documents: [] },
+      warnings: [],
+      route: "capabilities_help",
+      diagnostics,
+    };
+  }
+
   // Resolve short follow-ups ("sjekk den", "bruk bemanningsplanen") against the
   // most recent substantive question. Only the retrieval text is enriched; the
   // user still sees, and we still answer, the original message.
@@ -431,6 +468,7 @@ export async function runChat(
         answerFound: true,
         deterministicAnswerUsed: true,
         fallbackReasons,
+        verifierAction: "none",
       },
     };
   }
@@ -602,6 +640,7 @@ export async function runChat(
   // Verify the drafted answer: if we know the requested metric value but the
   // model omitted it or claimed missing information, substitute the correct,
   // deterministic answer. (Belt-and-braces on top of the deterministic path.)
+  let verifierAction = "none";
   if (knownValue !== null && valueSource !== null) {
     const verdict = verifyAnswer({
       plan,
@@ -617,7 +656,10 @@ export async function runChat(
     if (!verdict.ok && verdict.replacement) {
       answer = verdict.replacement;
       deterministicAnswerUsed = true;
+      verifierAction = "replaced_deterministic";
       if (verdict.reason) fallbackReasons.push(verdict.reason);
+    } else {
+      verifierAction = "passed";
     }
   }
 
@@ -636,6 +678,7 @@ export async function runChat(
     answerFound: knownValue !== null || sources.length > 0,
     deterministicAnswerUsed,
     fallbackReasons,
+    verifierAction,
   };
   logChatPlan(requestId, diagnostics);
 
