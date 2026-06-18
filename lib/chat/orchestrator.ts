@@ -35,7 +35,7 @@ import {
   MAX_CAPACITY_MATCHES,
   type DocumentMatch,
 } from "@/lib/rag/documentSearch";
-import type { DocumentReference } from "@/lib/documents/types";
+import type { DocumentReference, StoredStructuredTable } from "@/lib/documents/types";
 import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
@@ -55,7 +55,10 @@ import {
   parseMonthRange,
   filterMonthsByBound,
   scrubOutOfPeriodMonths,
+  parseISOMonth,
 } from "@/lib/chat/dateRange";
+import { getMonthlyCapacity } from "@/lib/assistant/tools/capacity";
+import type { MonthlyCapacity } from "@/lib/assistant/domain/capacity";
 import { readMetricField } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
@@ -786,8 +789,10 @@ export async function runChat(
   // when no structured rows exist), compute the demand breakdown, and hand the
   // model a structured note so it answers from the staffing plan, not guesswork.
   let structuredAvail: StructuredAvailability | null = null;
+  let structuredTables: StoredStructuredTable[] = [];
   if (intent.capacity) {
-    structuredAvail = readStructuredAvailability(await getStructuredTables());
+    structuredTables = await getStructuredTables();
+    structuredAvail = readStructuredAvailability(structuredTables);
   }
 
   // Track structured-staffing-plan sources that actually fed the answer, so they
@@ -841,16 +846,27 @@ export async function runChat(
     const r = Math.round(n * 100) / 100;
     return Number.isInteger(r) ? formatHours(r) : String(r);
   };
+  // Canonical Norwegian month names for rendering an ISO label back to prose.
+  const NO_MONTHS = [
+    "januar", "februar", "mars", "april", "mai", "juni",
+    "juli", "august", "september", "oktober", "november", "desember",
+  ];
+  const monthLabel = (iso: string): string => {
+    const parsed = parseISOMonth(iso);
+    if (!parsed) return iso; // already a name (no year in source) or unparseable
+    const name = NO_MONTHS[parsed.month - 1];
+    return parsed.year !== null ? `${name} ${parsed.year}` : name;
+  };
+  // Emit the deterministic per-fag monthly block from the capacity TOOL output.
+  // The tool already filtered to the requested period (inclusive "frem til"),
+  // so the model only sees in-period months and can never drop the last one.
   const emitMonthlyCapacity = (
-    avail: StructuredAvailability,
+    months: MonthlyCapacity[],
+    sources: string[],
     origin: "structured" | "text",
   ) => {
-    const bound = parseMonthRange(retrievalText);
-    const months = bound
-      ? filterMonthsByBound(avail.byMonth, bound)
-      : avail.byMonth;
     context.monthly_capacity = months.map((m) => ({
-      month: m.month,
+      month: monthLabel(m.month),
       byRole: m.byRole,
       total: m.total,
     }));
@@ -860,10 +876,11 @@ export async function runChat(
           .map(([role, hrs]) => `${role} ${fmtHoursExact(hrs as number)} timer`)
           .join(", ");
         return roleParts
-          ? `- ${m.month}: ${roleParts}`
-          : `- ${m.month}: ${fmtHoursExact(m.total)} timer tilgjengelig`;
+          ? `- ${monthLabel(m.month)}: ${roleParts}`
+          : `- ${monthLabel(m.month)}: ${fmtHoursExact(m.total)} timer tilgjengelig`;
       })
       .join("\n");
+    const bound = parseMonthRange(retrievalText);
     const periodNote = bound
       ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
         `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode, ` +
@@ -872,64 +889,67 @@ export async function runChat(
         `IKKE beskriv dem som «manglende» eller «mangler kapasitetstall». Hvis du nevner ` +
         `manglende måneder, skal det bare gjelde måneder INNENFOR den etterspurte perioden. `
       : "";
-    if (bound && months.length === 0) {
+    notes.push(
+      `Tilgjengelig kapasitet per fag per måned (${origin === "structured" ? "strukturert fra bemanningsplanen" : "lest fra bemanningsplanens dokumentutdrag"}):\n` +
+        `${periodNote}${monthLines}\n` +
+        `Kilde: ${sources.join(", ") || "bemanningsplan"}. ` +
+        "Gjenta disse tallene per fag for HVER måned over i svaret — ikke utelat noen måned " +
+        "eller noe fag, og ikke si at en måned mangler tall når den står over. " +
+        "Oppgi alltid periode og kilde i svaret.",
+    );
+  };
+
+  const monthlyDataAvailable = Boolean(
+    structuredAvail && structuredAvail.byMonth.length > 0,
+  );
+  // Delegate the month-by-month view to the getMonthlyCapacity TOOL (structured
+  // rows first, text chunks as fallback). Coverage drives the outcome:
+  //   full    → emit the deterministic per-fag block
+  //   partial → data exists but none inside the requested period → say so
+  //   none    → genuinely nothing → keep the existing "missing"/"read chunks" notes
+  if ((intent.capacity && monthlyDataAvailable) || decision.route === "monthly_capacity") {
+    const bound = parseMonthRange(retrievalText) ?? undefined;
+    const origin: "structured" | "text" = monthlyDataAvailable ? "structured" : "text";
+    const capResult = await getMonthlyCapacity.run(
+      { bound },
+      { getStructuredTables: async () => structuredTables, documentMatches: matches },
+    );
+    if (capResult.coverage === "full" && capResult.data) {
+      // Cite the plain document names (not the sheet-decorated tool labels).
+      const docSources =
+        origin === "structured"
+          ? structuredAvail!.sources
+          : [...new Set(matches.map((m) => m.documentName))];
+      emitMonthlyCapacity(capResult.data.months, docSources, origin);
+      structuredCapacitySources.push(...docSources);
+    } else if (capResult.coverage === "partial") {
       // A range was stated but no month falls inside it: say so, don't fabricate.
       notes.push(
         "Det finnes ingen måneder i bemanningsplanen innenfor den etterspurte " +
           "perioden. Si tydelig at det ikke finnes månedlig kapasitet for perioden — " +
           "ikke vis tall for andre måneder og ikke fyll inn nuller.",
       );
-    } else {
-      notes.push(
-        `Tilgjengelig kapasitet per fag per måned (${origin === "structured" ? "strukturert fra bemanningsplanen" : "lest fra bemanningsplanens dokumentutdrag"}):\n` +
-          `${periodNote}${monthLines}\n` +
-          `Kilde: ${avail.sources.join(", ") || "bemanningsplan"}. ` +
-          "Gjenta disse tallene per fag for HVER måned over i svaret — ikke utelat noen måned " +
-          "eller noe fag, og ikke si at en måned mangler tall når den står over. " +
-          "Oppgi alltid periode og kilde i svaret.",
-      );
-    }
-    structuredCapacitySources.push(...avail.sources);
-  };
-
-  const monthlyDataAvailable = Boolean(
-    structuredAvail && structuredAvail.byMonth.length > 0,
-  );
-  if (intent.capacity && monthlyDataAvailable) {
-    emitMonthlyCapacity(structuredAvail!, "structured");
-  } else if (decision.route === "monthly_capacity") {
-    // A month-by-month view was asked for, but there are no STRUCTURED monthly
-    // rows. Before declaring monthly capacity missing, read the per-fag monthly
-    // figures deterministically from the staffing-plan TEXT chunks (the
-    // «Kapasitetsanalyse» sheet, already in context.documents). Only when that
-    // yields nothing too do we say monthly capacity is missing.
-    const textAvail = readMonthlyAvailabilityFromText(matches);
-    if (textAvail.byMonth.length > 0) {
-      emitMonthlyCapacity(textAvail, "text");
-    } else if (matches.length > 0) {
-      const bound = parseMonthRange(retrievalText);
-      const periodNote = bound
-        ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
-          `oppgitt måned. Vis KUN måneder innenfor perioden — måneder utenfor ` +
-          `perioden skal ikke nevnes og aldri omtales som manglende. `
-        : "";
-      notes.push(
-        "Tilgjengelig kapasitet per måned finnes ikke som ferdig oppsummerte " +
-          "strukturerte tall, men bemanningsplanen i dokumentutdragene (arket " +
-          "«Kapasitetsanalyse») har tilgjengelig kapasitet per fag per måned. " +
-          "Les tallene per fag for hver måned derfra og svar med dem. " +
-          periodNote +
-          "Ikke si at kapasiteten mangler når tallene står i dokumentutdragene, og " +
-          "ikke fyll inn nuller. Oppgi alltid periode og kilde (dokument/ark).",
-      );
-    } else {
-      // Genuinely nothing to read — say so, never substitute zeros.
-      notes.push(
-        "Det finnes ikke månedlig kapasitet i de strukturerte dataene fra " +
-          "bemanningsplanen, og ingen dokumentutdrag med månedstall. Si tydelig at " +
-          "tilgjengelig kapasitet per måned mangler for den etterspurte perioden. " +
-          "Ikke fyll inn nuller og ikke anslå tall.",
-      );
+    } else if (decision.route === "monthly_capacity") {
+      // Nothing structured AND nothing parseable in chunks. If there are still
+      // raw chunks, point the model at them; otherwise say monthly capacity is
+      // missing — never substitute zeros.
+      if (matches.length > 0) {
+        notes.push(
+          "Tilgjengelig kapasitet per måned finnes ikke som ferdig oppsummerte " +
+            "strukturerte tall, men bemanningsplanen i dokumentutdragene (arket " +
+            "«Kapasitetsanalyse») kan ha tilgjengelig kapasitet per fag per måned. " +
+            "Les tallene per fag for hver måned derfra og svar med dem. " +
+            "Ikke si at kapasiteten mangler når tallene står i dokumentutdragene, og " +
+            "ikke fyll inn nuller. Oppgi alltid periode og kilde (dokument/ark).",
+        );
+      } else {
+        notes.push(
+          "Det finnes ikke månedlig kapasitet i de strukturerte dataene fra " +
+            "bemanningsplanen, og ingen dokumentutdrag med månedstall. Si tydelig at " +
+            "tilgjengelig kapasitet per måned mangler for den etterspurte perioden. " +
+            "Ikke fyll inn nuller og ikke anslå tall.",
+        );
+      }
     }
   }
 
