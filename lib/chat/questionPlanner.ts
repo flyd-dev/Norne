@@ -107,7 +107,18 @@ export function planQuestion(input: PlanInput): QuestionPlan {
   const { message, retrievalText, intent, decision, history, isFollowUp } = input;
 
   const metricMatch = resolveMetric(retrievalText);
-  const entity = resolveEntity({ message, history });
+
+  // Only project-bearing routes resolve a project. Staffing/capacity, account
+  // and list routes must NOT pick up a project number — a "nytt prosjekt"
+  // capacity question has no project, and a stray account number in history
+  // (e.g. 6940) must never become "prosjekt 6940".
+  const routeBearsProject =
+    decision.route === "project_summary" ||
+    decision.route === "budget_lines" ||
+    decision.route === "quantities";
+  const entity = routeBearsProject
+    ? resolveEntity({ message, history })
+    : { projectNumber: null, projectName: null, matchedFrom: [] as string[], confidence: "low" as const };
   const hasProject = Boolean(entity.projectNumber || entity.projectName);
 
   const planIntent = planIntentFrom(

@@ -46,7 +46,11 @@ import {
 } from "@/lib/chat/followup";
 import { planQuestion } from "@/lib/chat/questionPlanner";
 import { resolveEntity } from "@/lib/chat/entityResolver";
-import { extractHistoryFacts } from "@/lib/chat/historyFacts";
+import {
+  extractHistoryFacts,
+  metricForResolvedProject,
+} from "@/lib/chat/historyFacts";
+import { parseMonthRange, filterMonthsByBound } from "@/lib/chat/dateRange";
 import { readMetricField } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
@@ -228,7 +232,14 @@ export async function runChat(
   }
 
   // --- Accounts -------------------------------------------------------------
-  if (intent.topics.includes("accounts")) {
+  // Only fetch accounts when the resolved route actually allows them. A project
+  // metric/summary, capacity or list route must NEVER pull in the chart of
+  // accounts, even though the keyword-free intent fallback adds an "accounts"
+  // topic — that is exactly how `accounts` leaked into a kontraktsverdi answer.
+  if (
+    intent.topics.includes("accounts") &&
+    decision.allowedSources.includes("accounts")
+  ) {
     const accounts = await getAccounts();
     firestoreCollections.push(COLLECTIONS.accounts);
 
@@ -454,9 +465,19 @@ export async function runChat(
   // Resolve the project against the data we now hold (Endre context, Firestore
   // list and history), then look for the requested metric's value. Prefer a
   // structured source (Endre/Firestore field); fall back to a value already
-  // established in the conversation. This drives both the deterministic answer
-  // path below and the answer verifier further down.
-  const resolvedEntity = resolveEntity({ message, history, projects });
+  // established in the conversation FOR THE SAME PROJECT. This drives both the
+  // deterministic answer path below and the answer verifier further down.
+  //
+  // Only project-bearing routes resolve a project entity. Capacity/account/list
+  // routes must NOT resolve a project from history — that is how a stray account
+  // number (e.g. 6940) leaked in as "prosjekt 6940" on a staffing question.
+  const routeUsesProjectEntity =
+    decision.route === "project_summary" ||
+    decision.route === "budget_lines" ||
+    decision.route === "quantities";
+  const resolvedEntity = routeUsesProjectEntity
+    ? resolveEntity({ message, history, projects })
+    : { projectNumber: null, projectName: null, projectId: null };
   let knownValue: number | string | null = null;
   let valueSource: MetricValueSource | null = null;
   // Only single-value project questions use the known-value / deterministic path.
@@ -486,9 +507,22 @@ export async function runChat(
         valueSource = "structured";
       }
     }
-    if (knownValue === null && historyFacts.metrics[plan.metric] !== undefined) {
-      knownValue = historyFacts.metrics[plan.metric]!;
-      valueSource = "history";
+    // History fallback: ONLY a value that history established for THIS resolved
+    // project. A contract value remembered for Pilestredet/7100 must never be
+    // reused for AFBO NORA/3025.
+    if (knownValue === null) {
+      const fromHistory = metricForResolvedProject(
+        historyFacts,
+        {
+          projectNumber: resolvedEntity.projectNumber,
+          projectName: resolvedEntity.projectName,
+        },
+        plan.metric,
+      );
+      if (fromHistory !== undefined) {
+        knownValue = fromHistory;
+        valueSource = "history";
+      }
     }
   }
 
@@ -515,8 +549,23 @@ export async function runChat(
       question: message,
     });
     deterministicAnswerUsed = true;
-    const sources = [...firestoreCollections, ...endreSources];
+    // Strict source pruning for a project metric: a kontraktsverdi answer must
+    // never cite accounts/kontoplan/bemanningsplan, even if such a collection
+    // was incidentally fetched. Drop the route's excluded sources (accounts,
+    // staffingPlan, …) from both the cited sources and dataUsed, and remove any
+    // account-truncation warning that has no business on this route.
+    const checkedSources = [...firestoreCollections, ...endreSources];
+    const prune = pruneSources(checkedSources, {
+      excludedSources: decision.excludedSources,
+      endreContributed: endreSources.length > 0,
+    });
+    const sources = [...prune.sources];
     if (valueSource === "history") sources.push("Samtalehistorikk");
+    if (prune.prunedAccounts) accountWarningsPruned = true;
+    const cleanCollections = firestoreCollections.filter(
+      (c) => !(prune.prunedAccounts && c === COLLECTIONS.accounts),
+    );
+    const cleanWarnings = warnings.filter((w) => !/\bkontoer\b/i.test(w));
 
     logChatPlan(requestId, {
       intent: plan.intent,
@@ -525,7 +574,7 @@ export async function runChat(
       resolvedMetric: plan.metric,
       confidence: plan.confidence,
       selectedSources: sources,
-      checkedSources: [...firestoreCollections, ...endreSources],
+      checkedSources,
       answerFound: true,
       deterministicAnswerUsed: true,
       fallbackReasons,
@@ -534,8 +583,8 @@ export async function runChat(
     return {
       answer,
       sources,
-      dataUsed: { firestoreCollections, documents: [] },
-      warnings,
+      dataUsed: { firestoreCollections: cleanCollections, documents: [] },
+      warnings: cleanWarnings,
       route: decision.route,
       diagnostics: {
         intent: plan.intent,
@@ -544,11 +593,12 @@ export async function runChat(
         resolvedMetric: plan.metric,
         confidence: plan.confidence,
         selectedSources: sources,
-        checkedSources: [...firestoreCollections, ...endreSources],
+        checkedSources,
         answerFound: true,
         deterministicAnswerUsed: true,
         fallbackReasons,
         verifierAction: "none",
+        ...(accountWarningsPruned ? { accountWarningsPruned: true } : {}),
       },
     };
   }
@@ -659,19 +709,31 @@ export async function runChat(
   // possible from structured rows. Expose it as its own context + note so the
   // model lists per-month figures and always states the period and source.
   if (intent.capacity && structuredAvail && structuredAvail.byMonth.length > 0) {
-    context.monthly_capacity = structuredAvail.byMonth.map((m) => ({
+    // Deterministically honour a stated time range ("frem til september 2026" =
+    // up to AND INCLUDING September). We filter the month list here so the model
+    // can only ever see the months inside the range — it never gets a chance to
+    // reverse "frem til" into September–December.
+    const bound = parseMonthRange(retrievalText);
+    const months = bound
+      ? filterMonthsByBound(structuredAvail.byMonth, bound)
+      : structuredAvail.byMonth;
+    context.monthly_capacity = months.map((m) => ({
       month: m.month,
       byRole: m.byRole,
       total: m.total,
     }));
-    const monthLines = structuredAvail.byMonth
+    const monthLines = months
       .map((m) => `- ${m.month}: ${formatHours(m.total)} timer tilgjengelig`)
       .join("\n");
+    const periodNote = bound
+      ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
+        `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode. `
+      : "";
     notes.push(
       "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
-        `${monthLines}\n` +
+        `${periodNote}${monthLines}\n` +
         `Kilde: ${structuredAvail.sources.join(", ") || "bemanningsplan"}. ` +
-        "Oppgi alltid periode og kilde i svaret.",
+        "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor perioden.",
     );
   }
 

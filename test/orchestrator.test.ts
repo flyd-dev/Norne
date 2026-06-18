@@ -335,9 +335,10 @@ describe("runChat — account-list questions", () => {
     expect(r.warnings.some((w) => /Viser kun 50 av 65 kontoer/.test(w))).toBe(true);
   });
 
-  it("suppresses the account truncation warning on a non-account route", async () => {
-    // A generic, keyword-free question falls back to projects+accounts; accounts
-    // are incidental, so the "Viser kun …" warning must NOT appear.
+  it("does not fetch or cite accounts on a non-account route", async () => {
+    // A generic, keyword-free question resolves to project_summary, whose route
+    // policy excludes accounts. Accounts must not be fetched at all (so no "Viser
+    // kun …" warning can arise) and must never be cited as a source.
     mAccounts.mockResolvedValue(
       Array.from({ length: 65 }, (_, i) => ({
         id: `a${i}`,
@@ -347,9 +348,10 @@ describe("runChat — account-list questions", () => {
     );
     const r = await runChat("Hei, kan du fortelle meg litt?", "req");
     expect(r.route).not.toBe("account_list");
+    // The route excludes accounts, so they are never fetched.
+    expect(mAccounts).not.toHaveBeenCalled();
     expect(r.warnings.join(" ")).not.toMatch(/Viser kun/);
-    expect(r.diagnostics?.accountWarningsPruned).toBe(true);
-    // The incidental accounts source is pruned from the cited sources.
+    expect(r.dataUsed.firestoreCollections).not.toContain("accounts");
     expect(r.sources).not.toContain("accounts");
   });
 });
