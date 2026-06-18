@@ -46,10 +46,10 @@ export function logChatError(requestId: string, errorType: string): void {
 /**
  * Safe diagnostics for the optional Endre live-data source selection.
  *
- * Logs ONLY the route, boolean readiness/attempt/found flags, the short project
- * query token (a project number, never free-text), the capability source labels,
- * and a coded fallback reason. NEVER logs raw payloads, tokens, credentials, ids,
- * or any user message content.
+ * Logs ONLY the route, boolean readiness/attempt/found flags, safe project
+ * counts, the short project query token (a project number, never free-text), the
+ * capability source labels, and a coded fallback reason. NEVER logs raw payloads,
+ * tokens, credentials, ids, or any user message content.
  */
 export function logEndreDiagnostics(
   requestId: string,
@@ -58,6 +58,8 @@ export function logEndreDiagnostics(
     endreReady: boolean;
     attemptedEndre: boolean;
     projectQuery: string | null;
+    projectListCount: number;
+    normalizedProjectListCount: number;
     endreFound: boolean;
     endreSources: string[];
     fallbackReason: string | null;

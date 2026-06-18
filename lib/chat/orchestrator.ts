@@ -177,6 +177,8 @@ export async function runChat(
     const diag: EndreDiagnostics = {
       projectQuery: null,
       attemptedEndre: false,
+      projectListCount: 0,
+      normalizedProjectListCount: 0,
       endreFound: false,
       fallbackReason: null,
     };
@@ -204,6 +206,8 @@ export async function runChat(
       endreReady: ready,
       attemptedEndre: diag.attemptedEndre,
       projectQuery: diag.projectQuery,
+      projectListCount: diag.projectListCount,
+      normalizedProjectListCount: diag.normalizedProjectListCount,
       endreFound: diag.endreFound,
       endreSources: [...endreSources],
       fallbackReason: diag.fallbackReason,

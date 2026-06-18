@@ -29,9 +29,17 @@ const MAX_SAMPLE_ROWS = 5;
 /** Max tag/organization names kept. */
 const MAX_NAMES = 25;
 
-/** Candidate fields that may hold a project's id, in priority order. */
+/**
+ * Candidate fields that may hold a project's id, in priority order. Matched
+ * case- and separator-insensitively (see `pickField`), so PascalCase (`Id`),
+ * camelCase (`projectId`) and snake_case (`project_id`) all resolve.
+ */
 const ID_FIELDS = ["id", "project_id", "projectId", "uuid", "guid"] as const;
-/** Fields resolveProject matches on; coerced to strings so numeric values match. */
+/**
+ * Fields resolveProject matches on; coerced to strings so numeric values match.
+ * Matched case- and separator-insensitively, so Endre's PascalCase fields
+ * (`Name`, `ProjectName`, `ProjectNumber`) populate the canonical keys below.
+ */
 const NAME_FIELDS = [
   "project_name",
   "project_number",
@@ -63,6 +71,10 @@ export interface EndreDiagnostics {
   projectQuery: string | null;
   /** True once the Endre project list call was actually issued. */
   attemptedEndre: boolean;
+  /** Items returned by listProjects after shape-normalization (`toArray`). */
+  projectListCount: number;
+  /** Projects that survived `toProjectLike` (had a resolvable id). */
+  normalizedProjectListCount: number;
   /** True when Endre produced a usable context block. */
   endreFound: boolean;
   /** Coded reason we fell back to Firebase (null when endreFound). */
@@ -85,16 +97,51 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** Envelope keys that may directly carry the array of items. */
+const ARRAY_ENVELOPE_KEYS = [
+  "data",
+  "items",
+  "results",
+  "projects",
+  "value",
+  "records",
+  "content",
+] as const;
+/** Envelope keys that may wrap a nested response object (one level deeper). */
+const NESTED_ENVELOPE_KEYS = [
+  "data",
+  "response",
+  "result",
+  "payload",
+  "body",
+] as const;
+
 /**
- * Coerce an Endre list response into an array. Endpoints may return a bare array
- * or a common envelope ({ data | items | results | projects: [...] }).
+ * Coerce an Endre list response into an array — the SINGLE shared normalization
+ * used by both the chat path (`buildEndreProjectContext`) and the admin endpoint
+ * (`findEndreProjects`), so the two can never disagree on how many projects Endre
+ * returned. Handles:
+ *   - a bare array,
+ *   - a common envelope ({ data | items | results | projects | value | … : [...] }),
+ *   - a nested response ({ data: { items: [...] } }, { response: { projects: [...] } }).
+ * Exported for direct regression testing.
  */
-function toArray(value: unknown): unknown[] {
+export function toArray(value: unknown, depth = 0): unknown[] {
   if (Array.isArray(value)) return value;
   const rec = asRecord(value);
   if (!rec) return [];
-  for (const key of ["data", "items", "results", "projects", "value"]) {
+  for (const key of ARRAY_ENVELOPE_KEYS) {
     if (Array.isArray(rec[key])) return rec[key] as unknown[];
+  }
+  // Nested response: recurse one or two levels into envelope objects.
+  if (depth < 2) {
+    for (const key of NESTED_ENVELOPE_KEYS) {
+      const nested = rec[key];
+      if (nested && typeof nested === "object") {
+        const arr = toArray(nested, depth + 1);
+        if (arr.length > 0) return arr;
+      }
+    }
   }
   return [];
 }
@@ -171,29 +218,61 @@ function extractNames(value: unknown): { count: number; items: string[] } {
   return { count: rows.length, items: items.slice(0, MAX_NAMES) };
 }
 
+/** Normalize a field name for case- and separator-insensitive comparison. */
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Pick the first candidate field present in a record, matching field names
+ * case- and separator-insensitively. This is what makes the integration robust
+ * to Endre's PascalCase fields: candidate `"id"` matches key `"Id"`, candidate
+ * `"project_number"` matches key `"ProjectNumber"`, and so on.
+ */
+function pickField(
+  rec: Record<string, unknown>,
+  index: Map<string, string>,
+  candidates: readonly string[],
+): unknown {
+  for (const candidate of candidates) {
+    const key = index.get(normalizeKey(candidate));
+    if (key !== undefined) return rec[key];
+  }
+  return undefined;
+}
+
+/** True for id-like field names (id / *_id / *Id / *_uid / uuid / guid). */
+function isIdLikeKey(key: string): boolean {
+  return (
+    /^(id|uuid|guid)$/i.test(key) ||
+    /(_id|_uid)$/i.test(key) ||
+    /[a-z]Id$/.test(key)
+  );
+}
+
 /** Map an unknown Endre project object into a ProjectLike for resolveProject. */
 function toProjectLike(value: unknown): ProjectLike | null {
   const rec = asRecord(value);
   if (!rec) return null;
-  let id: string | undefined;
-  for (const field of ID_FIELDS) {
-    const v = rec[field];
-    if (typeof v === "string" && v.trim()) {
-      id = v.trim();
-      break;
-    }
-    if (typeof v === "number" && Number.isFinite(v)) {
-      id = String(v);
-      break;
-    }
+  // Build a normalized-key index once so id/name lookups are case-insensitive.
+  const index = new Map<string, string>();
+  for (const key of Object.keys(rec)) {
+    const norm = normalizeKey(key);
+    if (!index.has(norm)) index.set(norm, key);
   }
+
+  let id: string | undefined;
+  const rawId = pickField(rec, index, ID_FIELDS);
+  if (typeof rawId === "string" && rawId.trim()) id = rawId.trim();
+  else if (typeof rawId === "number" && Number.isFinite(rawId)) id = String(rawId);
   if (!id) return null;
 
   const like: ProjectLike = { id, ...sanitizeRecord(rec) };
-  // Ensure the fields resolveProject matches on are present as strings, even
-  // when Endre returns the project number as a number.
+  // Populate the canonical name fields resolveProject matches on, reading them
+  // case-insensitively (so `ProjectName` → `project_name`) and coercing to
+  // strings (so a numeric project number still matches).
   for (const field of NAME_FIELDS) {
-    const v = rec[field];
+    const v = pickField(rec, index, [field]);
     if (v !== undefined && v !== null && typeof v !== "object") {
       like[field] = String(v);
     }
@@ -201,10 +280,18 @@ function toProjectLike(value: unknown): ProjectLike | null {
   return like;
 }
 
-/** Drop the internal id from a project record before it reaches the model. */
+/**
+ * Drop the internal id (and any other id-like field, e.g. a PascalCase `Id` or
+ * `OrganizationId` preserved by sanitizeRecord) before a project reaches the
+ * model. Keeps names/numbers, never leaks raw ids/guids.
+ */
 function withoutId(project: ProjectLike): Record<string, unknown> {
-  const { id: _id, ...rest } = project;
-  return rest;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(project)) {
+    if (key === "id" || isIdLikeKey(key)) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 /** Run a best-effort Endre call; a failing endpoint yields null, not a throw. */
@@ -324,9 +411,12 @@ export async function buildEndreProjectContext(
     return null; // Endre unavailable → fall back.
   }
 
-  const projects = toArray(listRaw)
+  const rawList = toArray(listRaw);
+  if (diag) diag.projectListCount = rawList.length;
+  const projects = rawList
     .map(toProjectLike)
     .filter((p): p is ProjectLike => p !== null);
+  if (diag) diag.normalizedProjectListCount = projects.length;
   if (projects.length === 0) {
     if (diag) diag.fallbackReason = "no_projects_in_endre";
     return null;

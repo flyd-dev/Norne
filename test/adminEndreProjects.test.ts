@@ -93,6 +93,33 @@ describe("GET /api/admin/endre/projects — lookup", () => {
     expect(body.projects[0]).not.toHaveProperty("id");
   });
 
+  it("reports total/count 1 for the exact VPS project shape (PascalCase)", async () => {
+    // Regression: the chat path used to see zero projects for this same payload
+    // while the admin endpoint saw one. Both now share `toArray` normalization.
+    mGetEndreClient.mockReturnValue(
+      fakeClient({
+        listProjects: () =>
+          Promise.resolve([
+            {
+              Id: "654fc8b8-6ce3-4f6a-c8c6-08dc5ec49df4",
+              Name: "3025 - AFBO NORA",
+              ProjectName: "AFBO NORA",
+              ProjectNumber: "3025",
+              OrganizationId: "ef9003d4-8940-484a-a24c-7284f0bf4fa7",
+              IsFinished: false,
+            },
+          ]),
+      }),
+    );
+
+    const res = await GET(request(TOKEN, "3025"));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(1);
+    expect(body.count).toBe(1);
+    expect(body.projects[0].ProjectNumber).toBe("3025");
+  });
+
   it("never exposes ids, tokens, or secret-like fields", async () => {
     const SECRET = "tok_LIVE_SECRET_999";
     mGetEndreClient.mockReturnValue(
