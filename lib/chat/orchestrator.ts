@@ -95,6 +95,8 @@ import {
 } from "@/lib/chat/capabilities";
 import { deriveConversationState } from "@/lib/chat/conversationState";
 import { deriveChatState } from "@/lib/assistant/state/chatState";
+import { validateToolRuns } from "@/lib/assistant/validate";
+import type { ToolRun } from "@/lib/assistant/runner";
 import { decideClarification, isClarificationQuestion } from "@/lib/chat/clarify";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
@@ -148,6 +150,8 @@ export interface ChatDiagnostics {
   stateProject?: string | null;
   /** True when the chat state carried a capacity period/scope into this turn. */
   stateCapacityScope?: boolean;
+  /** Validation verdict over the tool data ("answerable"|"incomplete"|"no_data"|…). */
+  validationReason?: string;
 }
 
 export interface ChatResult {
@@ -1142,6 +1146,20 @@ export async function runChat(
     previousRelevantRoute: state.lastTopic,
     contextUsed: valueSource === "history" || followUp.isFollowUp,
     ...(toolRuns.length > 0 ? { toolsRun: toolRuns } : {}),
+    ...(toolRuns.length > 0
+      ? {
+          validationReason: validateToolRuns(
+            plan,
+            toolRuns.map(
+              (t) =>
+                ({
+                  tool: t.tool,
+                  result: { data: null, sources: [], coverage: t.coverage },
+                }) as ToolRun,
+            ),
+          ).reason,
+        }
+      : {}),
     stateProject:
       chatState.currentProject?.projectNumber ??
       chatState.currentProject?.projectName ??
