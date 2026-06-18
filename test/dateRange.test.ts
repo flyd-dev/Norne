@@ -129,4 +129,29 @@ describe("scrubOutOfPeriodMonths", () => {
     expect(out).not.toMatch(/oktober/i);
     expect(out).toContain("Kapasitetsanalyse");
   });
+
+  it("never removes in-period per-fag month rows", () => {
+    // A full per-fag monthly listing: every in-period month row (and its
+    // role/value figures) must survive untouched, only the trailing
+    // out-of-period months are stripped.
+    const answer = [
+      "Tilgjengelig kapasitet per fag frem til september 2026:",
+      "- Juli 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8",
+      "- August 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8",
+      "- September 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8",
+      "Måneder utenfor perioden: oktober, november og desember 2026.",
+      "Kilde: bemanningsplan_ai_demo_betong_2026.xlsx (Kapasitetsanalyse).",
+    ].join("\n");
+    const out = scrubOutOfPeriodMonths(answer, bound);
+    // Every in-period month row and all per-fag values are intact.
+    expect(out).toContain("Juli 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8");
+    expect(out).toContain("August 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8");
+    expect(out).toContain(
+      "September 2026: Steel fixer 31.5, Carpenter 57.8, Welder 15.8",
+    );
+    // Out-of-period months are gone, source label intact.
+    expect(out).not.toMatch(/oktober|november|desember/i);
+    expect(out).toContain("bemanningsplan_ai_demo_betong_2026.xlsx");
+    expect(out).toContain("Kapasitetsanalyse");
+  });
 });

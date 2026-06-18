@@ -875,13 +875,37 @@ export async function runChat(
     }
     structuredCapacitySources.push(...structuredAvail!.sources);
   } else if (decision.route === "monthly_capacity") {
-    // A month-by-month view was asked for, but there are no structured monthly
-    // rows. State that monthly capacity is missing — never substitute zeros.
-    notes.push(
-      "Det finnes ikke månedlig kapasitet i de strukturerte dataene fra " +
-        "bemanningsplanen. Si tydelig at tilgjengelig kapasitet per måned mangler " +
-        "for den etterspurte perioden. Ikke fyll inn nuller og ikke anslå tall.",
-    );
+    // A month-by-month view was asked for, but there are no STRUCTURED monthly
+    // rows. Before declaring monthly capacity missing, fall back to the staffing-
+    // plan TEXT chunks: the «Kapasitetsanalyse» sheet is already in
+    // context.documents, with tilgjengelig kapasitet per fag per måned as text.
+    // The model must read those figures rather than claim the data is missing —
+    // only when there is genuinely nothing to read do we say it is missing.
+    if (matches.length > 0) {
+      const bound = parseMonthRange(retrievalText);
+      const periodNote = bound
+        ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
+          `oppgitt måned. Vis KUN måneder innenfor perioden — måneder utenfor ` +
+          `perioden skal ikke nevnes og aldri omtales som manglende. `
+        : "";
+      notes.push(
+        "Tilgjengelig kapasitet per måned finnes ikke som ferdig oppsummerte " +
+          "strukturerte tall, men bemanningsplanen i dokumentutdragene (arket " +
+          "«Kapasitetsanalyse») har tilgjengelig kapasitet per fag per måned. " +
+          "Les tallene per fag for hver måned derfra og svar med dem. " +
+          periodNote +
+          "Ikke si at kapasiteten mangler når tallene står i dokumentutdragene, og " +
+          "ikke fyll inn nuller. Oppgi alltid periode og kilde (dokument/ark).",
+      );
+    } else {
+      // Genuinely nothing to read — say so, never substitute zeros.
+      notes.push(
+        "Det finnes ikke månedlig kapasitet i de strukturerte dataene fra " +
+          "bemanningsplanen, og ingen dokumentutdrag med månedstall. Si tydelig at " +
+          "tilgjengelig kapasitet per måned mangler for den etterspurte perioden. " +
+          "Ikke fyll inn nuller og ikke anslå tall.",
+      );
+    }
   }
 
   // On a monthly-capacity follow-up the previous turn's project demand (timer/

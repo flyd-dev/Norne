@@ -51,7 +51,23 @@ export function readStructuredAvailability(
   const sources = new Set<string>();
   let hasData = false;
 
-  for (const table of tables) {
+  // Prefer tables that carry month-bearing availability rows (e.g. the
+  // «Kapasitetsanalyse» sheet) over month-less total tables (e.g. a «Dashboard»
+  // summary). When any monthly table exists, BOTH the per-role and per-month
+  // numbers are read only from the monthly tables, so Dashboard totals can never
+  // double-count the roles nor mask the structured monthly breakdown.
+  const monthlyTables = tables.filter((table) =>
+    table.rows.some(
+      (row) =>
+        Boolean(row.month && row.month.trim() !== "") &&
+        row.availableHours !== null &&
+        Number.isFinite(row.availableHours) &&
+        row.availableHours > 0,
+    ),
+  );
+  const source = monthlyTables.length > 0 ? monthlyTables : tables;
+
+  for (const table of source) {
     for (const row of table.rows) {
       const hours = row.availableHours;
       if (hours === null || !Number.isFinite(hours) || hours <= 0) continue;
