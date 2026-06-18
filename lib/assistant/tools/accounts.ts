@@ -25,17 +25,20 @@ const MAX_ACCOUNTS = 8;
 export interface AccountQueryInput {
   /** Free text: a search query or the thing being purchased. */
   query: string;
+  /** Max accounts to return (default 8). */
+  limit?: number;
 }
 
 function run(
   terms: string[],
   ctx: ToolContext,
+  limit = MAX_ACCOUNTS,
 ): ToolResult<RankedAccount[]> {
   const accounts = ctx.accounts ?? [];
   if (accounts.length === 0) {
     return none("Ingen kontoplan tilgjengelig.");
   }
-  const ranked = rankAccounts(accounts, terms, MAX_ACCOUNTS);
+  const ranked = rankAccounts(accounts, terms, limit);
   if (ranked.length === 0) {
     return none("Fant ingen konto som matcher.", ["accounts"]);
   }
@@ -50,10 +53,16 @@ export const searchChartOfAccounts: Tool<AccountQueryInput, RankedAccount[]> = {
     if (!input || typeof input.query !== "string" || input.query.trim() === "") {
       return { ok: false, error: "query is required" };
     }
-    return { ok: true, input: { query: input.query } };
+    return {
+      ok: true,
+      input: {
+        query: input.query,
+        ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+      },
+    };
   },
   async run(input, ctx) {
-    return run(expandSearchTerms(input.query), ctx);
+    return run(expandSearchTerms(input.query), ctx, input.limit);
   },
 };
 
@@ -65,6 +74,6 @@ export const getAccountForPurchase: Tool<AccountQueryInput, RankedAccount[]> = {
   validate: searchChartOfAccounts.validate,
   async run(input, ctx) {
     // expandSearchTerms covers both a bare subject and a full purchase phrase.
-    return run(expandSearchTerms(input.query), ctx);
+    return run(expandSearchTerms(input.query), ctx, input.limit);
   },
 };

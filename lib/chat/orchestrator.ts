@@ -28,7 +28,7 @@ import {
 } from "@/lib/firestore/normalize";
 import { detectIntent } from "@/lib/chat/intent";
 import { parseCapacityDemand } from "@/lib/chat/capacity";
-import { rankAccounts } from "@/lib/chat/accountLookup";
+import { getAccountForPurchase } from "@/lib/assistant/tools/accounts";
 import { resolveProject } from "@/lib/chat/projectResolver";
 import {
   searchDocuments,
@@ -352,18 +352,18 @@ export async function runChat(
 
     if (intent.accountLookup) {
       // Posting question ("Hva fører jeg X på?"): send only the accounts most
-      // relevant to the expanded search terms, never the whole chart. The model
-      // is told to suggest the closest match (and never invent a number).
-      const ranked = rankAccounts(
-        accounts,
-        intent.searchTerms,
-        MAX_LOOKUP_ACCOUNTS,
+      // relevant to the purchase, never the whole chart, via the account TOOL.
+      // The model is told to suggest the closest match (and never invent a number).
+      const lookup = await getAccountForPurchase.run(
+        { query: intent.lookupSubject ?? intent.searchTerms.join(" "), limit: MAX_LOOKUP_ACCOUNTS },
+        { accounts },
       );
-      const picked = ranked.length > 0 ? ranked.map((r) => r.account) : accounts;
+      const matched = lookup.coverage === "full" && lookup.data ? lookup.data : [];
+      const picked = matched.length > 0 ? matched.map((r) => r.account) : accounts;
       context.accounts = picked
         .slice(0, MAX_LOOKUP_ACCOUNTS)
         .map((d) => normalizeAccount(d, includeIds));
-      if (ranked.length === 0 && accounts.length > MAX_LOOKUP_ACCOUNTS) {
+      if (matched.length === 0 && accounts.length > MAX_LOOKUP_ACCOUNTS) {
         warnings.push(
           `Fant ingen konto som matcher «${intent.lookupSubject}» direkte; viser et utvalg kontoer.`,
         );
