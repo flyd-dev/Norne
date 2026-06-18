@@ -103,8 +103,18 @@ describe("demand analysis (orchestrator) — per-month hours, no millions", () =
     // Available is per-month hours (Carpenter 57.8 × 208 = 12 022), never millions.
     expect(userPrompt).toContain("12 022");
     expect(userPrompt).not.toMatch(/1[\s ]?1\d\d[\s ]?\d\d\d/); // no 1.1M-style figure
-    // The estimate guardrail is present.
+    // The estimate guardrail is present and authoritative.
     expect(userPrompt).toMatch(/ESTIMAT/);
     expect(userPrompt).toMatch(/208 t\/person\/mnd/);
+    expect(userPrompt).toMatch(/Bruk KUN disse timetallene/i);
+    // The competing raw per-month persons block is NOT emitted on a demand
+    // question (it's what made the model treat 31.5 persons as hours).
+    expect(userPrompt).not.toContain("monthly_capacity");
+  });
+
+  it("does NOT suppress the per-month breakdown for a pure capacity question", async () => {
+    const r = await runChat("Vis tilgjengelig kapasitet per fag frem til september 2026", "req", []);
+    expect(r.route).toBe("monthly_capacity");
+    expect(cap.inputs.at(-1)!.userPrompt).toContain("monthly_capacity");
   });
 });

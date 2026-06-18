@@ -968,12 +968,17 @@ export async function runChat(
     );
     notes.push(formatCapacityNote(analysis));
     if (availabilityHours) {
+      const hourLines = [...availabilityHours.entries()]
+        .map(([role, h]) => `- ${role}: ${formatHours(h)} timer`)
+        .join("\n");
       notes.push(
-        `Tilgjengelig kapasitet over er et ESTIMAT: tilgjengelige personer × ` +
-          `${HOURS_PER_PERSON_MONTH} t/person/mnd (48 t/uke) for måneden ` +
-          `${availabilityMonth ?? "(første i planen)"}. Sammenlign behovet mot riktig ` +
-          `måned — ikke summer kapasitet på tvers av måneder. Si tydelig at tallet er ` +
-          `et estimat, og oppgi hvilken måned det gjelder.`,
+        `Tilgjengelig kapasitet i TIMER for ${availabilityMonth ?? "(første måned i planen)"} ` +
+          `(ESTIMAT: tilgjengelige personer × ${HOURS_PER_PERSON_MONTH} t/person/mnd, 48 t/uke):\n` +
+          `${hourLines}\n` +
+          `Bruk KUN disse timetallene som tilgjengelig kapasitet i sammenligningen mot ` +
+          `behovet — IKKE bruk personantall (f.eks. 31,5) som om det var timer, og ikke ` +
+          `summer kapasitet på tvers av måneder. Si tydelig at tallet er et estimat for ` +
+          `${availabilityMonth ?? "måneden"}, og at kilden er arket «Kapasitetsanalyse».`,
       );
     }
     context.capacity_demand = {
@@ -1067,7 +1072,15 @@ export async function runChat(
   //   full    → emit the deterministic per-fag block
   //   partial → data exists but none inside the requested period → say so
   //   none    → genuinely nothing → keep the existing "missing"/"read chunks" notes
-  if ((intent.capacity && monthlyDataAvailable) || decision.route === "monthly_capacity") {
+  // On a real demand question the per-fag AVAILABLE figure belongs to the demand
+  // analysis above (in hours, per the asked month). Don't ALSO emit the raw
+  // per-month persons block here — two competing "available" representations made
+  // the model pick the 31.5 persons figure and treat it as hours. The per-month
+  // breakdown still runs for genuine "vis kapasitet per måned" questions.
+  const showMonthlyBreakdown =
+    decision.route === "monthly_capacity" ||
+    (intent.capacity && monthlyDataAvailable && !hasRealDemand);
+  if (showMonthlyBreakdown) {
     const bound = parseMonthRange(retrievalText) ?? undefined;
     const origin: "structured" | "text" = monthlyDataAvailable ? "structured" : "text";
     const capResult = await getMonthlyCapacity.run(
