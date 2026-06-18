@@ -11,8 +11,14 @@
  * Pure and dependency-free for easy testing.
  */
 
-import type { CanonicalRole } from "@/lib/chat/roles";
+import {
+  CANONICAL_ROLES,
+  findRoleMatches,
+  type CanonicalRole,
+} from "@/lib/chat/roles";
+import { parseMonth } from "@/lib/chat/dateRange";
 import type { StoredStructuredTable } from "@/lib/documents/types";
+import type { DocumentMatch } from "@/lib/rag/documentSearch";
 
 export interface MonthlyAvailability {
   month: string;
@@ -90,6 +96,106 @@ export function readStructuredAvailability(
           entry.byRole[row.role] = (entry.byRole[row.role] ?? 0) + hours;
         }
       }
+    }
+  }
+
+  return {
+    byRole,
+    byMonth: monthOrder.map((m) => monthMap.get(m)!),
+    sources: [...sources],
+    hasData,
+  };
+}
+
+/** Matches a month name with an optional trailing 4-digit year, for the label. */
+const MONTH_LABEL_RE =
+  /\b(januar|january|februar|february|mars|march|april|mai|may|juni|june|juli|july|august|september|oktober|october|november|desember|december)\b(?:\s+(\d{4}))?/i;
+
+/** Read a single hour figure from a text segment ("31.5", "1 200", "900,5"). */
+function parseHourToken(text: string): number | null {
+  const m = text.match(/\d[\d .]*(?:[.,]\d+)?/);
+  if (!m) return null;
+  // Drop spaces (thousands), and if a comma is the only separator treat it as a
+  // decimal point. A dot is already a decimal point here.
+  let token = m[0].replace(/\s+/g, "");
+  if (!token.includes(".") && token.includes(",")) token = token.replace(",", ".");
+  else token = token.replace(/,/g, "");
+  const n = Number.parseFloat(token);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Deterministically read per-month, per-fag availability from staffing-plan
+ * TEXT chunks (the «Kapasitetsanalyse» sheet) when no structured monthly rows
+ * exist. Each line that names a month and one-or-more roles with an hour figure
+ * is parsed — e.g. "September 2026: Steel fixer 31.5, Carpenter 57.8, Welder
+ * 15.8" or a tab/space row "september  Stålfikser  900". Numbers are attributed
+ * to the nearest preceding role on the line, so a multi-fag line yields one
+ * entry per fag. Never invents numbers; lines without a month are ignored.
+ *
+ * This exists so a "frem til september 2026" answer carries September's per-fag
+ * values deterministically instead of relying on the model to read the chunk —
+ * the model has been observed to drop the last in-range month.
+ */
+export function readMonthlyAvailabilityFromText(
+  chunks: Pick<DocumentMatch, "text" | "documentName">[],
+): StructuredAvailability {
+  const byRole = new Map<CanonicalRole, number>();
+  const monthOrder: string[] = [];
+  const monthMap = new Map<string, MonthlyAvailability>();
+  const sources = new Set<string>();
+  let hasData = false;
+
+  for (const chunk of chunks) {
+    for (const rawLine of chunk.text.split("\n")) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const monthMatch = line.match(MONTH_LABEL_RE);
+      if (!monthMatch || !parseMonth(monthMatch[0])) continue;
+
+      // Strip the month label so its year can't be read as an hour figure, and
+      // so role/number attribution starts after the month.
+      const rest = line.slice((monthMatch.index ?? 0) + monthMatch[0].length);
+      const roleMatches = findRoleMatches(rest);
+      if (roleMatches.length === 0) continue;
+
+      // Use a normalized lowercase month label as the key so the same month from
+      // different chunks/overlaps merges instead of duplicating.
+      const monthLabel = monthMatch[0].replace(/\s+/g, " ").trim().toLowerCase();
+
+      for (let i = 0; i < roleMatches.length; i++) {
+        const { role, end } = roleMatches[i];
+        const windowEnd =
+          i + 1 < roleMatches.length ? roleMatches[i + 1].index : rest.length;
+        const hours = parseHourToken(rest.slice(end, windowEnd));
+        if (hours === null) continue;
+
+        hasData = true;
+        sources.add(chunk.documentName);
+        byRole.set(role, (byRole.get(role) ?? 0) + hours);
+
+        let entry = monthMap.get(monthLabel);
+        if (!entry) {
+          entry = { month: monthLabel, byRole: {}, total: 0 };
+          monthMap.set(monthLabel, entry);
+          monthOrder.push(monthLabel);
+        }
+        // First value per (month, role) wins, so chunk overlaps don't double-count.
+        if (entry.byRole[role] === undefined) {
+          entry.byRole[role] = hours;
+          entry.total += hours;
+        }
+      }
+    }
+  }
+
+  // Recompute role totals from per-month entries so overlap dedupe is respected.
+  byRole.clear();
+  for (const m of monthOrder) {
+    const entry = monthMap.get(m)!;
+    for (const role of CANONICAL_ROLES) {
+      const h = entry.byRole[role];
+      if (h !== undefined) byRole.set(role, (byRole.get(role) ?? 0) + h);
     }
   }
 

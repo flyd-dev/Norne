@@ -81,3 +81,26 @@ export function normalizeRole(text: string): CanonicalRole | null {
 export function mentionsRole(text: string): boolean {
   return normalizeRole(text) !== null;
 }
+
+/** Alias alternation, longest-first so "steel fixer" wins over "stilfixer". */
+const ALIAS_ALTERNATION = ALIAS_PAIRS.map(({ alias }) =>
+  alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+).join("|");
+
+/**
+ * Locate every role/trade mention in a text, in left-to-right order, with its
+ * canonical role and character span. Used to read per-role figures off a single
+ * line ("Steel fixer 31.5, Carpenter 57.8, Welder 15.8") by attributing each
+ * number to the nearest preceding role.
+ */
+export function findRoleMatches(
+  text: string,
+): { role: CanonicalRole; index: number; end: number }[] {
+  const re = new RegExp(`(${ALIAS_ALTERNATION})`, "gi");
+  const out: { role: CanonicalRole; index: number; end: number }[] = [];
+  for (const m of text.matchAll(re)) {
+    const role = normalizeRole(m[0]);
+    if (role) out.push({ role, index: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+  }
+  return out;
+}

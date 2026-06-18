@@ -75,6 +75,7 @@ import {
 import { routeMessage, type Route } from "@/lib/chat/router";
 import {
   readStructuredAvailability,
+  readMonthlyAvailabilityFromText,
   type StructuredAvailability,
 } from "@/lib/chat/capacityStructured";
 import { getEndreClient } from "@/lib/endre/client";
@@ -827,32 +828,46 @@ export async function runChat(
     }
   }
 
-  // Month-by-month availability (e.g. "tilgjengelig kapasitet hver måned"): only
-  // possible from structured rows. Expose it as its own context + note so the
-  // model lists per-month figures and always states the period and source.
-  const monthlyDataAvailable = Boolean(
-    structuredAvail && structuredAvail.byMonth.length > 0,
-  );
-  if (intent.capacity && monthlyDataAvailable) {
-    // Deterministically honour a stated time range ("frem til september 2026" =
-    // up to AND INCLUDING September). We filter the month list here so the model
-    // can only ever see the months inside the range — it never gets a chance to
-    // reverse "frem til" into September–December.
+  // Month-by-month availability (e.g. "tilgjengelig kapasitet hver måned"):
+  // possible from structured rows, or — failing that — read deterministically
+  // from the staffing-plan text chunks. Expose it as its own context + note so
+  // the model lists per-fag figures and always states the period and source.
+  //
+  // Emit the same deterministic block for both sources: filter to the requested
+  // range ("frem til september 2026" = up to AND INCLUDING September), hand the
+  // model the per-fag values explicitly, and tell it those values are complete —
+  // so it can never reverse "frem til" nor drop the last in-range month.
+  const fmtHoursExact = (n: number): string => {
+    const r = Math.round(n * 100) / 100;
+    return Number.isInteger(r) ? formatHours(r) : String(r);
+  };
+  const emitMonthlyCapacity = (
+    avail: StructuredAvailability,
+    origin: "structured" | "text",
+  ) => {
     const bound = parseMonthRange(retrievalText);
     const months = bound
-      ? filterMonthsByBound(structuredAvail!.byMonth, bound)
-      : structuredAvail!.byMonth;
+      ? filterMonthsByBound(avail.byMonth, bound)
+      : avail.byMonth;
     context.monthly_capacity = months.map((m) => ({
       month: m.month,
       byRole: m.byRole,
       total: m.total,
     }));
     const monthLines = months
-      .map((m) => `- ${m.month}: ${formatHours(m.total)} timer tilgjengelig`)
+      .map((m) => {
+        const roleParts = Object.entries(m.byRole)
+          .map(([role, hrs]) => `${role} ${fmtHoursExact(hrs as number)} timer`)
+          .join(", ");
+        return roleParts
+          ? `- ${m.month}: ${roleParts}`
+          : `- ${m.month}: ${fmtHoursExact(m.total)} timer tilgjengelig`;
+      })
       .join("\n");
     const periodNote = bound
       ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
-        `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode. ` +
+        `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode, ` +
+        `og ALLE skal være med (også den siste måneden i perioden). ` +
         `Måneder utenfor perioden er bevisst utelatt: ikke nevn dem i det hele tatt, og ` +
         `IKKE beskriv dem som «manglende» eller «mangler kapasitetstall». Hvis du nevner ` +
         `manglende måneder, skal det bare gjelde måneder INNENFOR den etterspurte perioden. `
@@ -866,22 +881,32 @@ export async function runChat(
       );
     } else {
       notes.push(
-        "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
+        `Tilgjengelig kapasitet per fag per måned (${origin === "structured" ? "strukturert fra bemanningsplanen" : "lest fra bemanningsplanens dokumentutdrag"}):\n` +
           `${periodNote}${monthLines}\n` +
-          `Kilde: ${structuredAvail!.sources.join(", ") || "bemanningsplan"}. ` +
-          "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor " +
-          "perioden, og ikke omtal måneder utenfor perioden som manglende.",
+          `Kilde: ${avail.sources.join(", ") || "bemanningsplan"}. ` +
+          "Gjenta disse tallene per fag for HVER måned over i svaret — ikke utelat noen måned " +
+          "eller noe fag, og ikke si at en måned mangler tall når den står over. " +
+          "Oppgi alltid periode og kilde i svaret.",
       );
     }
-    structuredCapacitySources.push(...structuredAvail!.sources);
+    structuredCapacitySources.push(...avail.sources);
+  };
+
+  const monthlyDataAvailable = Boolean(
+    structuredAvail && structuredAvail.byMonth.length > 0,
+  );
+  if (intent.capacity && monthlyDataAvailable) {
+    emitMonthlyCapacity(structuredAvail!, "structured");
   } else if (decision.route === "monthly_capacity") {
     // A month-by-month view was asked for, but there are no STRUCTURED monthly
-    // rows. Before declaring monthly capacity missing, fall back to the staffing-
-    // plan TEXT chunks: the «Kapasitetsanalyse» sheet is already in
-    // context.documents, with tilgjengelig kapasitet per fag per måned as text.
-    // The model must read those figures rather than claim the data is missing —
-    // only when there is genuinely nothing to read do we say it is missing.
-    if (matches.length > 0) {
+    // rows. Before declaring monthly capacity missing, read the per-fag monthly
+    // figures deterministically from the staffing-plan TEXT chunks (the
+    // «Kapasitetsanalyse» sheet, already in context.documents). Only when that
+    // yields nothing too do we say monthly capacity is missing.
+    const textAvail = readMonthlyAvailabilityFromText(matches);
+    if (textAvail.byMonth.length > 0) {
+      emitMonthlyCapacity(textAvail, "text");
+    } else if (matches.length > 0) {
       const bound = parseMonthRange(retrievalText);
       const periodNote = bound
         ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +

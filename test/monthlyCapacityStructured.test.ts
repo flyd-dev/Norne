@@ -242,3 +242,100 @@ describe("monthly capacity — document fallback when no structured monthly rows
     expect(userPrompt).toContain("tilgjengelig kapasitet per måned mangler");
   });
 });
+
+/**
+ * Live-shaped regression: the real Kapasitetsanalyse sheet lands as row-style
+ * TEXT ("Måned: september 2026 | Fag: Stålfikser | Tilgjengelig: 31,5 | …"),
+ * NOT as parsed structured rows. The previous build handed these chunks to the
+ * model with only a "read them" note, and the model dropped the last in-range
+ * month — September said "Tall for tilgjengelig kapasitet er ikke oppgitt".
+ *
+ * The orchestrator must now read the per-fag monthly figures deterministically
+ * from this text, INCLUDE September (inclusive "frem til"), exclude oktober–
+ * desember, and never tell the model September is missing.
+ */
+function kapasitetRowChunk(): DocumentMatch {
+  // One row per (month, fag): month | fag | tilgjengelig | tildelt | navn.
+  // Norwegian fag names + comma decimals, exactly as the workbook exports.
+  const row = (month: string, fag: string, avail: string) =>
+    `Måned: ${month} | Fag: ${fag} | Tilgjengelig: ${avail} | Tildelt: 20 | Navn: Per`;
+  const months = [
+    "juli 2026",
+    "august 2026",
+    "september 2026",
+    "oktober 2026",
+    "november 2026",
+    "desember 2026",
+  ];
+  const lines = ["Ark: Kapasitetsanalyse", "Kolonner: Måned, Fag, Tilgjengelig, Tildelt, Navn"];
+  for (const m of months) {
+    lines.push(row(m, "Stålfikser", "31,5"));
+    lines.push(row(m, "Tømrer", "57,8"));
+    lines.push(row(m, "Sveiser", "15,8"));
+  }
+  return {
+    documentId: "D1",
+    documentName: DOC,
+    fileType: "xlsx",
+    sheetName: "Kapasitetsanalyse",
+    chunkIndex: 0,
+    score: 1,
+    text: lines.join("\n"),
+  } as DocumentMatch;
+}
+
+describe("monthly capacity — row-style Kapasitetsanalyse text (live shape)", () => {
+  beforeEach(() => {
+    // No structured monthly rows — only the row-style text chunk exists.
+    store.tables = [];
+    search.matches = [kapasitetRowChunk()];
+  });
+
+  it("surfaces July/August/September per-fag values deterministically", async () => {
+    const r = await runChat(QUESTION, "req", []);
+    expect(r.route).toBe("monthly_capacity");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    // Each in-range month must carry all three fag with their exact values.
+    for (const month of ["juli 2026", "august 2026", "september 2026"]) {
+      const line = userPrompt
+        .split("\n")
+        .find((l) => l.toLowerCase().includes(`- ${month}`));
+      expect(line, `deterministic line for ${month}`).toBeTruthy();
+      expect(line).toContain("Steel fixer 31.5 timer");
+      expect(line).toContain("Carpenter 57.8 timer");
+      expect(line).toContain("Welder 15.8 timer");
+    }
+  });
+
+  it("never tells the model September is missing, and excludes okt–des", async () => {
+    await runChat(QUESTION, "req", []);
+    const lower = cap.inputs.at(-1)!.userPrompt.toLowerCase();
+    expect(lower).not.toContain("tilgjengelig kapasitet per måned mangler");
+    // The deterministic note lists no out-of-period month.
+    const noteStart = lower.indexOf("tilgjengelig kapasitet per fag per måned");
+    const note = lower.slice(noteStart);
+    expect(note).not.toContain("- oktober 2026");
+    expect(note).not.toContain("- november 2026");
+    expect(note).not.toContain("- desember 2026");
+  });
+
+  it("cites the bemanningsplan/Kapasitetsanalyse it answered from", async () => {
+    const r = await runChat(QUESTION, "req", []);
+    expect(r.sources).toContain(DOC);
+    expect(cap.inputs.at(-1)!.userPrompt).toContain("Kapasitetsanalyse");
+  });
+
+  it("keeps September in the final answer through the scrub", async () => {
+    cap.reply = [
+      "Tilgjengelig kapasitet per fag frem til september 2026:",
+      "Juli 2026: Steel fixer 31.5 timer, Carpenter 57.8 timer, Welder 15.8 timer",
+      "August 2026: Steel fixer 31.5 timer, Carpenter 57.8 timer, Welder 15.8 timer",
+      "September 2026: Steel fixer 31.5 timer, Carpenter 57.8 timer, Welder 15.8 timer",
+      `Kilde: ${DOC} (Kapasitetsanalyse).`,
+    ].join("\n");
+    const r = await runChat(QUESTION, "req", []);
+    expect(r.answer).toContain("September 2026: Steel fixer 31.5 timer");
+    expect(r.answer.toLowerCase()).not.toContain("ikke oppgitt");
+    expect(r.answer.toLowerCase()).not.toContain("oktober");
+  });
+});
