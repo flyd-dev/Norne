@@ -94,6 +94,7 @@ import {
   isCapabilitiesQuestion,
 } from "@/lib/chat/capabilities";
 import { deriveConversationState } from "@/lib/chat/conversationState";
+import { deriveChatState } from "@/lib/assistant/state/chatState";
 import { decideClarification, isClarificationQuestion } from "@/lib/chat/clarify";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
@@ -141,6 +142,12 @@ export interface ChatDiagnostics {
   previousRelevantRoute?: string | null;
   /** True when current-chat context contributed to resolving the question. */
   contextUsed?: boolean;
+  /** Tools dispatched this turn, each with the coverage it achieved. */
+  toolsRun?: { tool: string; coverage: string }[];
+  /** Project the explicit chat state had in focus (number ?? name), if any. */
+  stateProject?: string | null;
+  /** True when the chat state carried a capacity period/scope into this turn. */
+  stateCapacityScope?: boolean;
 }
 
 export interface ChatResult {
@@ -203,6 +210,11 @@ export async function runChat(
   // defaulting to project/capacity data. This runs BEFORE any retrieval, so no
   // projects, accounts, Endre or documents are ever fetched for a vague opener.
   const state = deriveConversationState(history);
+  // Explicit, structured chat state (plan point 4): currentProject,
+  // currentCapacityScope, pendingClarification, … derived from this chat only.
+  const chatState = deriveChatState(history);
+  // Tool dispatches this turn, recorded for observability (tool + coverage).
+  const toolRuns: { tool: string; coverage: string }[] = [];
   const clarify = decideClarification(message, state);
   if (clarify.required && clarify.question) {
     const diagnostics: ChatDiagnostics = {
@@ -358,6 +370,7 @@ export async function runChat(
         { query: intent.lookupSubject ?? intent.searchTerms.join(" "), limit: MAX_LOOKUP_ACCOUNTS },
         { accounts },
       );
+      toolRuns.push({ tool: "getAccountForPurchase", coverage: lookup.coverage });
       const matched = lookup.coverage === "full" && lookup.data ? lookup.data : [];
       const picked = matched.length > 0 ? matched.map((r) => r.account) : accounts;
       context.accounts = picked
@@ -614,6 +627,7 @@ export async function runChat(
         { metric: plan.metric },
         { projectRecord: record, projectRef: ref },
       );
+      toolRuns.push({ tool: "getProjectMetric", coverage: res.coverage });
       if (res.coverage === "full" && res.data && res.data.value !== null) {
         knownValue = res.data.value;
         valueSource = "structured";
@@ -920,6 +934,7 @@ export async function runChat(
       { bound },
       { getStructuredTables: async () => structuredTables, documentMatches: matches },
     );
+    toolRuns.push({ tool: "getMonthlyCapacity", coverage: capResult.coverage });
     if (capResult.coverage === "full" && capResult.data) {
       // Cite the plain document names (not the sheet-decorated tool labels).
       const docSources =
@@ -1126,6 +1141,12 @@ export async function runChat(
     verifierAction,
     previousRelevantRoute: state.lastTopic,
     contextUsed: valueSource === "history" || followUp.isFollowUp,
+    ...(toolRuns.length > 0 ? { toolsRun: toolRuns } : {}),
+    stateProject:
+      chatState.currentProject?.projectNumber ??
+      chatState.currentProject?.projectName ??
+      null,
+    stateCapacityScope: chatState.currentCapacityScope !== null,
     ...(isProjectList
       ? { endreProjectCount, firestoreProjectCount, combinedProjectCount }
       : {}),
