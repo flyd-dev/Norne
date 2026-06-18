@@ -97,8 +97,25 @@ const PROJECT_LIST_RE =
 const ACCOUNT_LIST_RE =
   /\bhvilke\s+kontoer\b|\b(vis|list(?:e)?)\s+(?:meg\s+|alle\s+)?(?:kontoer|kontoplanen?)\b|\bvis\s+kontoplan(?:en)?\b|\bkontoer\s+(?:finnes|har\s+vi)\b|\bhele\s+kontoplanen?\b/i;
 
+/**
+ * Lighter monthly signal applied ONLY to the new message of a follow-up after a
+ * staffing/capacity turn. Once a capacity discussion is underway, a far weaker
+ * hint flips the answer to a month-by-month view: a bare month name, a 4-digit
+ * year, or "per måned"/"månedlig" — on top of the range phrases in MONTHLY_RE.
+ *
+ * Crucially this is NOT applied to the inherited prior question (which may say
+ * "starter i august" without ever asking for a monthly breakdown) — only to
+ * what the user just typed.
+ */
+const MONTHLY_FOLLOWUP_RE =
+  /\b(fram\s+til|frem\s+til|til\s+og\s+med|t\.?o\.?m\.?|ut\s+(?:å|a)ret|hver\s+m(?:å|a)ned|per\s+m(?:å|a)ned|m(?:å|a)nedlig|hver\s+mnd|per\s+mnd|januar|january|februar|february|mars|march|april|mai|may|juni|june|juli|july|august|september|oktober|october|november|desember|december|20\d{2})\b/i;
+
 function isMonthly(text: string): boolean {
   return MONTHLY_RE.test(text);
+}
+
+function isMonthlyFollowUp(text: string): boolean {
+  return MONTHLY_FOLLOWUP_RE.test(text);
 }
 
 /**
@@ -110,6 +127,13 @@ export function routeMessage(
   retrievalText: string,
   intent: DetectedIntent,
   resolvedFromFollowUp = false,
+  /**
+   * The raw new user message (only the latest turn), passed for follow-ups so a
+   * lighter monthly signal — a bare month/year after a capacity turn — can flip
+   * staffing_capacity to monthly_capacity without the inherited prior question
+   * leaking false positives.
+   */
+  followUpMessage?: string,
 ): RouteDecision {
   const base = {
     searchTerms: [] as string[],
@@ -177,7 +201,16 @@ export function routeMessage(
 
   // --- staffing_capacity / monthly_capacity ---------------------------------
   if (intent.capacity) {
-    const monthly = isMonthly(retrievalText);
+    // A month-by-month rollup is requested either by the (combined) retrieval
+    // text, OR — for a follow-up after a capacity turn — by a lighter signal in
+    // just the new message ("Gi meg det du har frem til september 2026", or even
+    // a bare month/year). The prior question is never scanned with the lighter
+    // pattern, so "starter i august" alone never forces a monthly view.
+    const monthly =
+      isMonthly(retrievalText) ||
+      (resolvedFromFollowUp &&
+        typeof followUpMessage === "string" &&
+        isMonthlyFollowUp(followUpMessage));
     const roleTerms = intent.capacityDemand?.roles.map((r) => r.role) ?? [];
     const monthTerm = intent.capacityDemand?.startMonth
       ? [intent.capacityDemand.startMonth]

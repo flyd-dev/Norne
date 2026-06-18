@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  parseBlocks,
+  type Block,
+  type InlineNode,
+} from "@/lib/markdown/markdown";
 
 interface DocumentReference {
   documentId: string;
@@ -48,83 +53,87 @@ const EXAMPLES = [
 ];
 
 /**
- * Lightweight, dependency-free renderer for assistant answers.
- * Preserves line breaks and renders `- `/`* ` bullet lists and `1.` numbered
- * lists. Plain text is kept as paragraphs with soft line breaks.
+ * Render parsed inline nodes (bold / emphasis / inline code / text) to React.
+ * Builds real elements — there is no HTML string, so nothing the model writes
+ * can be injected as markup.
  */
-function renderAnswer(text: string): React.ReactNode {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const blocks: React.ReactNode[] = [];
-  let para: string[] = [];
-  let bullets: string[] = [];
-  let ordered: string[] = [];
-  let key = 0;
-
-  const flushPara = () => {
-    if (para.length === 0) return;
-    blocks.push(
-      <p key={key++}>
-        {para.map((l, i) => (
-          <span key={i}>
-            {l}
-            {i < para.length - 1 ? <br /> : null}
-          </span>
-        ))}
-      </p>,
-    );
-    para = [];
-  };
-  const flushBullets = () => {
-    if (bullets.length === 0) return;
-    blocks.push(
-      <ul key={key++}>
-        {bullets.map((l, i) => (
-          <li key={i}>{l}</li>
-        ))}
-      </ul>,
-    );
-    bullets = [];
-  };
-  const flushOrdered = () => {
-    if (ordered.length === 0) return;
-    blocks.push(
-      <ol key={key++}>
-        {ordered.map((l, i) => (
-          <li key={i}>{l}</li>
-        ))}
-      </ol>,
-    );
-    ordered = [];
-  };
-
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    const bulletMatch = line.match(/^\s*[-*•]\s+(.*)$/);
-    const orderedMatch = line.match(/^\s*\d+[.)]\s+(.*)$/);
-
-    if (bulletMatch) {
-      flushPara();
-      flushOrdered();
-      bullets.push(bulletMatch[1]);
-    } else if (orderedMatch) {
-      flushPara();
-      flushBullets();
-      ordered.push(orderedMatch[1]);
-    } else if (line.trim() === "") {
-      flushPara();
-      flushBullets();
-      flushOrdered();
-    } else {
-      flushBullets();
-      flushOrdered();
-      para.push(line);
+function renderInline(nodes: InlineNode[]): React.ReactNode {
+  return nodes.map((node, i) => {
+    switch (node.type) {
+      case "text":
+        return <span key={i}>{node.value}</span>;
+      case "strong":
+        return <strong key={i}>{renderInline(node.children)}</strong>;
+      case "em":
+        return <em key={i}>{renderInline(node.children)}</em>;
+      case "code":
+        return (
+          <code className="answer-code" key={i}>
+            {node.value}
+          </code>
+        );
     }
-  }
-  flushPara();
-  flushBullets();
-  flushOrdered();
+  });
+}
 
-  return <div className="answer">{blocks}</div>;
+/**
+ * Safe Markdown renderer for assistant answers. Parses the text into a plain
+ * data tree (lib/markdown) and renders it with React elements: **bold**,
+ * headings (rendered as compact section titles, never giant H1s), bullet and
+ * numbered lists, fenced code blocks, and soft line breaks. No
+ * `dangerouslySetInnerHTML`, no raw HTML from the model.
+ */
+function renderBlock(block: Block, key: number): React.ReactNode {
+  switch (block.type) {
+    case "heading": {
+      const level = Math.min(Math.max(block.level, 1), 6);
+      return (
+        <p className={`answer-heading answer-h${level}`} key={key}>
+          {renderInline(block.inline)}
+        </p>
+      );
+    }
+    case "paragraph":
+      return (
+        <p key={key}>
+          {block.lines.map((line, i) => (
+            <span key={i}>
+              {renderInline(line)}
+              {i < block.lines.length - 1 ? <br /> : null}
+            </span>
+          ))}
+        </p>
+      );
+    case "bullets":
+      return (
+        <ul key={key}>
+          {block.items.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+    case "ordered":
+      return (
+        <ol key={key}>
+          {block.items.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ol>
+      );
+    case "code":
+      return (
+        <pre className="answer-pre" key={key}>
+          <code>{block.code}</code>
+        </pre>
+      );
+  }
+}
+
+function renderAnswer(text: string): React.ReactNode {
+  const blocks = parseBlocks(text);
+  return (
+    <div className="answer">{blocks.map((b, i) => renderBlock(b, i))}</div>
+  );
 }
 
 /**

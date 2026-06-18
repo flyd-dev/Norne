@@ -27,6 +27,7 @@ import {
   summarizeRows,
 } from "@/lib/firestore/normalize";
 import { detectIntent } from "@/lib/chat/intent";
+import { parseCapacityDemand } from "@/lib/chat/capacity";
 import { rankAccounts } from "@/lib/chat/accountLookup";
 import { resolveProject } from "@/lib/chat/projectResolver";
 import {
@@ -183,7 +184,31 @@ export async function runChat(
 
   // Turn the intent into an explicit route with a fixed source/search/format
   // policy. The orchestrator obeys this instead of re-deriving rules inline.
-  const decision = routeMessage(retrievalText, intent, followUp.isFollowUp);
+  // The raw new message is passed for follow-ups so a time-bound capacity
+  // follow-up ("…frem til september 2026") upgrades to monthly_capacity.
+  const decision = routeMessage(
+    retrievalText,
+    intent,
+    followUp.isFollowUp,
+    followUp.isFollowUp ? message : undefined,
+  );
+
+  // A monthly-capacity view reached via a follow-up must answer the month-by-
+  // month available capacity, NOT re-run the previous turn's project demand
+  // analysis (the 29 000-hour sizing) as its primary answer. We suppress the
+  // demand block unless the NEW message itself restates a concrete demand
+  // (hours or a role split) — a bare month/year does not count as a demand.
+  const newMessageDemand = followUp.isFollowUp
+    ? parseCapacityDemand(message)
+    : intent.capacityDemand;
+  const restatesDemand = Boolean(
+    newMessageDemand &&
+      (newMessageDemand.totalHours !== null || newMessageDemand.roles.length > 0),
+  );
+  const suppressDemandAnalysis =
+    decision.route === "monthly_capacity" &&
+    followUp.isFollowUp &&
+    !restatesDemand;
 
   // Reasoning/planning layer: resolve the entity (project) and metric the user
   // really means, decide which sources are relevant, and whether history is
@@ -684,7 +709,7 @@ export async function runChat(
     structuredAvail = readStructuredAvailability(await getStructuredTables());
   }
 
-  if (intent.capacity && intent.capacityDemand) {
+  if (intent.capacity && intent.capacityDemand && !suppressDemandAnalysis) {
     const analysis = analyzeCapacity(
       intent.capacityDemand,
       matches,
@@ -734,6 +759,18 @@ export async function runChat(
         `${periodNote}${monthLines}\n` +
         `Kilde: ${structuredAvail.sources.join(", ") || "bemanningsplan"}. ` +
         "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor perioden.",
+    );
+  }
+
+  // On a monthly-capacity follow-up the previous turn's project demand (timer/
+  // fordeling) is intentionally NOT in the context. Tell the model to answer
+  // with the month-by-month capacity and not to reconstruct that demand.
+  if (suppressDemandAnalysis) {
+    notes.push(
+      "Dette er et oppfølgingsspørsmål om tilgjengelig kapasitet per måned. Svar " +
+        "med månedstallene over — ikke gjenta behovsanalysen for det forrige " +
+        "prosjektet (timer/fordeling) med mindre brukeren uttrykkelig spør om " +
+        "prosjektkapasitet på nytt.",
     );
   }
 

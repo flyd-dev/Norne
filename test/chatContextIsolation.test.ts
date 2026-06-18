@@ -283,6 +283,94 @@ describe("F — monthly capacity honours 'frem til september 2026'", () => {
   });
 });
 
+// --- G: monthly follow-up AFTER a 29 000-hour staffing turn ----------------
+describe("G — monthly capacity follow-up after a staffing demand turn", () => {
+  function monthRow(month: string, hours: number): StoredStructuredTable {
+    return {
+      documentId: "D1",
+      documentName: "bemanningsplan_ai_demo_betong_2026.xlsx",
+      sheetName: "Kapasitetsanalyse",
+      columns: {},
+      rows: [
+        {
+          month,
+          role: "Carpenter",
+          rawRole: "Carpenter",
+          availableHours: hours,
+          assignedHours: null,
+          person: null,
+        },
+      ],
+    };
+  }
+
+  // The prior turn is the full 29 000-hour staffing/capacity question.
+  const STAFFING_HISTORY = [
+    {
+      role: "user" as const,
+      content:
+        "Vi starter nytt prosjekt i august. ca 29.000 timer. Fordeling 30% " +
+        "Stilfixer, 60% Carpenter og resterende welder. Har vi kapasitet til å ta " +
+        "prosjektet eller trenger vi flere folk?",
+    },
+    {
+      role: "assistant" as const,
+      content: "Behov per fag … tilgjengelig kapasitet … differanse …",
+    },
+  ];
+
+  beforeEach(() => {
+    store.tables = [
+      monthRow("januar 2026", 100),
+      monthRow("august 2026", 200),
+      monthRow("september 2026", 300),
+      monthRow("oktober 2026", 400),
+      monthRow("november 2026", 500),
+      monthRow("desember 2026", 600),
+    ];
+  });
+
+  it("routes to monthly_capacity, lists months through September, and drops the demand", async () => {
+    const r = await runChat(
+      "Gi meg det du har frem til september 2026",
+      "req",
+      STAFFING_HISTORY,
+    );
+
+    // The follow-up after a capacity turn is a monthly view, not a demand re-run.
+    expect(r.route).toBe("monthly_capacity");
+
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    // Months up to and including September are present...
+    expect(userPrompt).toContain("monthly_capacity");
+    expect(userPrompt).toContain("august 2026");
+    expect(userPrompt).toContain("september 2026");
+    // ...October–December are filtered out before the model sees them.
+    expect(userPrompt).not.toContain("oktober 2026");
+    expect(userPrompt).not.toContain("november 2026");
+    expect(userPrompt).not.toContain("desember 2026");
+
+    // The 29 000-hour demand analysis is NOT repeated as the primary answer:
+    // no structured demand block and no "Behov per fag" note.
+    expect(userPrompt).not.toContain("capacity_demand");
+    expect(userPrompt).not.toMatch(/Behov per fag/i);
+
+    // Monthly data exists, so the prompt must not be steered to "unavailable".
+    expect(userPrompt).not.toMatch(/ingen .*månedlige? data/i);
+
+    // Accounts and projects are excluded entirely; no project 6940 invented.
+    expect(mAccounts).not.toHaveBeenCalled();
+    expect(mProjects).not.toHaveBeenCalled();
+    expect(r.sources).not.toContain("accounts");
+    expect(r.diagnostics?.resolvedProjectNumber).toBeNull();
+    expect(userPrompt).not.toMatch(/prosjekt 6940/i);
+
+    // The capacity figures are attributed to the bemanningsplan / capacity
+    // workbook (cited in the structured monthly note the model answers from).
+    expect(userPrompt).toContain("bemanningsplan_ai_demo_betong_2026.xlsx");
+  });
+});
+
 // --- account lookup + project list still work ------------------------------
 describe("regression — existing routes still work", () => {
   it("account lookup still resolves to account 6570", async () => {

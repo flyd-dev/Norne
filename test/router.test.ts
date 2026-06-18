@@ -51,6 +51,38 @@ describe("routeMessage — capacity", () => {
       expect.arrayContaining(["accounts", "projects"]),
     );
   });
+
+  // A time-bound follow-up after a capacity turn: the combined retrieval text
+  // carries the demand, while the *new* message asks for a monthly view. It must
+  // upgrade to monthly_capacity (not stay on staffing_capacity).
+  it("upgrades a 'frem til <måned>' follow-up to monthly_capacity", () => {
+    const retrieval =
+      "Vi starter nytt prosjekt i august. ca 29.000 timer. Fordeling 30% " +
+      "Stilfixer, 60% Carpenter og resterende welder. Har vi kapasitet? " +
+      "Gi meg det du har frem til september 2026";
+    const d = routeMessage(retrieval, detectIntent(retrieval), true, "Gi meg det du har frem til september 2026");
+    expect(d.route).toBe("monthly_capacity");
+  });
+
+  // Even a bare month/year in the new message flips it, once a capacity
+  // discussion is underway (lighter signal applied only to the new message).
+  it("upgrades a bare-month follow-up to monthly_capacity", () => {
+    const retrieval =
+      "Vi starter nytt prosjekt i august. ca 29.000 timer. 60% Carpenter. " +
+      "Har vi kapasitet? Tallene for september 2026";
+    const d = routeMessage(retrieval, detectIntent(retrieval), true, "Tallene for september 2026");
+    expect(d.route).toBe("monthly_capacity");
+  });
+
+  // The lighter signal must NOT come from the inherited prior question: a fresh,
+  // self-contained demand that merely mentions a start month stays staffing.
+  it("keeps a self-contained demand mentioning a start month on staffing_capacity", () => {
+    const d = route(
+      "Vi starter nytt prosjekt i august. ca 29.000 timer. Fordeling 60% " +
+        "Carpenter og resten welder. Har vi kapasitet?",
+    );
+    expect(d.route).toBe("staffing_capacity");
+  });
 });
 
 describe("routeMessage — project / budget / quantities", () => {
