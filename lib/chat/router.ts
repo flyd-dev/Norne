@@ -19,6 +19,7 @@ import { expandGlossaryTerms } from "@/lib/chat/domainGlossary";
 
 export type Route =
   | "capabilities_help"
+  | "clarification"
   | "account_lookup"
   | "account_list"
   | "project_list"
@@ -28,6 +29,7 @@ export type Route =
   | "staffing_capacity"
   | "monthly_capacity"
   | "document_question"
+  | "general_qa"
   | "follow_up";
 
 /** The data sources a route is allowed to read from. */

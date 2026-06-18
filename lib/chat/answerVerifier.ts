@@ -15,6 +15,7 @@
 
 import type { QuestionPlan } from "@/lib/chat/questionPlanner";
 import type { SourceKind } from "@/lib/chat/router";
+import type { Metric } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
   formatNumberNo,
@@ -90,6 +91,63 @@ export function verifyAnswer(input: VerifyInput): VerifyResult {
   }
 
   return { ok: true };
+}
+
+/** A money figure stated as currency ("150 705 668 kr") or a grouped number. */
+const MONEY_WITH_UNIT_RE = /\d[\d   .]*\d\s*(kr|kroner|nok)\b/i;
+const GROUPED_NUMBER_RE = /\b\d{1,3}(?:[   .]\d{3})+\b/;
+
+/** True when the answer presents a concrete money amount (not a bare year/id). */
+export function presentsMoneyFigure(answer: string): boolean {
+  return MONEY_WITH_UNIT_RE.test(answer) || GROUPED_NUMBER_RE.test(answer);
+}
+
+export interface ContractGuardInput {
+  metric?: Metric;
+  answer: string;
+  projectName: string | null;
+  projectNumber: string | null;
+  /** True when a true contract-value field was found (deterministic path). */
+  hasVerifiedValue: boolean;
+  /**
+   * True when the ONLY numeric project data came from generic Endre amount
+   * totals (project_amounts/cases/contracts) — i.e. no dedicated contract-value
+   * field and no document content to draw a real contract value from.
+   */
+  onlyGenericEndreTotals: boolean;
+}
+
+export interface ContractGuardResult {
+  triggered: boolean;
+  replacement?: string;
+  reason?: string;
+}
+
+/**
+ * Stop a "kontraktsverdi" answer from passing off a generic Endre amount total
+ * as the contract value. When the requested metric is the contract value, no
+ * verified contract field was found, the only numbers available are generic
+ * Endre totals, and the drafted answer nonetheless states a money figure, we
+ * replace it with an honest "no dedicated contract-value field" answer.
+ */
+export function guardContractValue(input: ContractGuardInput): ContractGuardResult {
+  if (input.metric !== "contract_value") return { triggered: false };
+  if (input.hasVerifiedValue) return { triggered: false };
+  if (!input.onlyGenericEndreTotals) return { triggered: false };
+  if (!presentsMoneyFigure(input.answer)) return { triggered: false };
+
+  const ref =
+    input.projectName && input.projectNumber
+      ? `${input.projectName} (prosjekt ${input.projectNumber})`
+      : input.projectName ?? `prosjekt ${input.projectNumber ?? ""}`.trim();
+  return {
+    triggered: true,
+    reason: "contract_value_unverified",
+    replacement:
+      `Jeg finner ${ref} i Endre, men jeg finner ikke et eget felt for ` +
+      `kontraktsverdi i tilgjengelige data. Jeg finner derimot beløpsposter ` +
+      `(under «amounts»/«contracts»). Vil du at jeg viser dem i stedet?`,
+  };
 }
 
 /** Maps a route-excluded SourceKind to the source label it appears as. */

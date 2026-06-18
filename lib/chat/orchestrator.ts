@@ -57,7 +57,11 @@ import {
   buildProjectMetricAnswer,
   type MetricValueSource,
 } from "@/lib/chat/projectMetricAnswer";
-import { verifyAnswer, pruneSources } from "@/lib/chat/answerVerifier";
+import {
+  verifyAnswer,
+  pruneSources,
+  guardContractValue,
+} from "@/lib/chat/answerVerifier";
 import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
 import {
   analyzeCapacity,
@@ -81,6 +85,8 @@ import {
   CAPABILITIES_ANSWER,
   isCapabilitiesQuestion,
 } from "@/lib/chat/capabilities";
+import { deriveConversationState } from "@/lib/chat/conversationState";
+import { decideClarification } from "@/lib/chat/clarify";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -121,6 +127,12 @@ export interface ChatDiagnostics {
   combinedProjectCount?: number;
   /** True when an account truncation warning was suppressed on a non-account route. */
   accountWarningsPruned?: boolean;
+  /** True when the answer was a clarification (vague question, no chat context). */
+  clarificationRequired?: boolean;
+  /** The relevant topic the current chat had established, if any. */
+  previousRelevantRoute?: string | null;
+  /** True when current-chat context contributed to resolving the question. */
+  contextUsed?: boolean;
 }
 
 export interface ChatResult {
@@ -170,6 +182,44 @@ export async function runChat(
       dataUsed: { firestoreCollections: [], documents: [] },
       warnings: [],
       route: "capabilities_help",
+      diagnostics,
+    };
+  }
+
+  // --- Conversation-scoped state + clarification gate -----------------------
+  // The assistant's memory is THIS chat only. A new chat sends no history, so the
+  // derived state is empty and there is no carry-over of project/topic context.
+  // If the message is vague and context-dependent ("Gi meg det du har frem til
+  // september 2026", "Hva er kontraktsverdien?", "Vis det") AND the current chat
+  // holds no relevant context for it, ask a short clarifying question instead of
+  // defaulting to project/capacity data. This runs BEFORE any retrieval, so no
+  // projects, accounts, Endre or documents are ever fetched for a vague opener.
+  const state = deriveConversationState(history);
+  const clarify = decideClarification(message, state);
+  if (clarify.required && clarify.question) {
+    const diagnostics: ChatDiagnostics = {
+      intent: "clarification",
+      resolvedProjectNumber: null,
+      resolvedProjectName: null,
+      resolvedMetric: null,
+      confidence: "low",
+      selectedSources: [],
+      checkedSources: [],
+      answerFound: false,
+      deterministicAnswerUsed: false,
+      fallbackReasons: clarify.reason ? [clarify.reason] : [],
+      verifierAction: "none",
+      clarificationRequired: true,
+      previousRelevantRoute: state.lastTopic,
+      contextUsed: false,
+    };
+    logChatPlan(requestId, diagnostics);
+    return {
+      answer: clarify.question,
+      sources: [],
+      dataUsed: { firestoreCollections: [], documents: [] },
+      warnings: [],
+      route: "clarification",
       diagnostics,
     };
   }
@@ -623,6 +673,8 @@ export async function runChat(
         deterministicAnswerUsed: true,
         fallbackReasons,
         verifierAction: "none",
+        previousRelevantRoute: state.lastTopic,
+        contextUsed: valueSource === "history" || followUp.isFollowUp,
         ...(accountWarningsPruned ? { accountWarningsPruned: true } : {}),
       },
     };
@@ -846,6 +898,31 @@ export async function runChat(
     }
   }
 
+  // Contract-value guard: when the user asked for the kontraktsverdi, no verified
+  // contract-value field was found, and the only numbers we have are generic
+  // Endre amount totals, the model must not pass one of those off as the contract
+  // value. Replace such an answer with an honest "no dedicated field" response.
+  if (
+    plan.metric === "contract_value" &&
+    isMetricLookup &&
+    knownValue === null &&
+    hasResolvedProject
+  ) {
+    const guard = guardContractValue({
+      metric: plan.metric,
+      answer,
+      projectName: resolvedEntity.projectName,
+      projectNumber: resolvedEntity.projectNumber,
+      hasVerifiedValue: false,
+      onlyGenericEndreTotals: endreHandledProjects && matches.length === 0,
+    });
+    if (guard.triggered && guard.replacement) {
+      answer = guard.replacement;
+      verifierAction = "contract_value_guard";
+      if (guard.reason) fallbackReasons.push(guard.reason);
+    }
+  }
+
   // Sources: Firestore collection paths, document names, and any Endre
   // capabilities used — each clearly marked so the answer cites its origin.
   // (endreSourcesForList carries the project_list combine; endreSources the
@@ -878,6 +955,8 @@ export async function runChat(
     deterministicAnswerUsed,
     fallbackReasons,
     verifierAction,
+    previousRelevantRoute: state.lastTopic,
+    contextUsed: valueSource === "history" || followUp.isFollowUp,
     ...(isProjectList
       ? { endreProjectCount, firestoreProjectCount, combinedProjectCount }
       : {}),

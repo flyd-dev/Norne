@@ -100,6 +100,12 @@ export function logChatPlan(
     firestoreProjectCount?: number;
     /** True when an account truncation warning was suppressed on a non-account route. */
     accountWarningsPruned?: boolean;
+    /** True when the answer was a clarification (vague question, no chat context). */
+    clarificationRequired?: boolean;
+    /** The relevant topic the current chat had established, if any. */
+    previousRelevantRoute?: string | null;
+    /** True when current-chat context contributed to resolving the question. */
+    contextUsed?: boolean;
   },
 ): void {
   emit("log", { evt: "chat_plan", requestId, ...info });
