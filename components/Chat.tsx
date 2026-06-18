@@ -156,6 +156,12 @@ export default function Chat() {
     setError(null);
     setInput("");
     requestAnimationFrame(autoResize);
+    // Recent context for follow-up references ("sjekk den"): the prior turns,
+    // not the message we're about to send. Kept short and not persisted.
+    const history = messages.slice(-6).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
     setMessages((prev) => [...prev, { role: "user", content: message }]);
     setLoading(true);
 
@@ -163,7 +169,7 @@ export default function Chat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, history }),
       });
 
       let data: ApiResponse = {};

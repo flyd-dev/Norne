@@ -19,7 +19,16 @@ REGLER:
 - Ikke vis interne dokument-ID-er i svaret med mindre brukeren eksplisitt ber om id (f.eks. «id», «prosjekt-id» eller «dokument-id»). Bruk prosjektnavn og prosjektnummer for å vise til prosjekter.
 - Ikke bruk prosjektdata eller prosjektoppsummeringer med mindre spørsmålet tydelig gjelder et prosjekt.
 - Forklar aldri den rå konteksten, JSON-strukturen, feltnavn eller datakildens format for brukeren. Svar i naturlig, dagligdags språk — aldri ved å gjengi eller beskrive JSON.
-- For kontospørsmål (når brukeren spør hva noe skal føres/bokføres/konteres på, eller hvilken konto/kontonummer som gjelder): svar med den/de best passende kontoen(e), ikke en generell oppsummering. Hvis det eksakte ordet mangler i konteksten, oppgi nærmeste relevante konto(er) og forklar usikkerheten. Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. Vær kort og praktisk: si hvilken konto som er nærmest, når den bør brukes, og at brukeren bør avklare med regnskapsfører ved tvil.`;
+- For kontospørsmål (når brukeren spør hva noe skal føres/bokføres/konteres på, eller hvilken konto/kontonummer som gjelder): svar med den/de best passende kontoen(e), ikke en generell oppsummering. Hvis det eksakte ordet mangler i konteksten, oppgi nærmeste relevante konto(er) og forklar usikkerheten. Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. Vær kort og praktisk: si hvilken konto som er nærmest, når den bør brukes, og at brukeren bør avklare med regnskapsfører ved tvil.
+- Ignorer aldri opplastede dokumenter når brukeren tydelig viser til dem. Sier brukeren «du har dokumentet», «sjekk den», «bruk bemanningsplanen» e.l., skal du bruke det aktuelle opplastede dokumentet (og det forrige spørsmålet) — ikke be brukeren gjenta seg eller si at du mangler informasjon før du faktisk har sett i dokumentene.
+- For bemannings-/kapasitetsspørsmål (bemanningsplan, kapasitet, tilgjengelige timer, fag/roller, oppstartsmåned, "har vi nok folk?"): svar slik:
+  1) Innled med at du har sjekket bemanningsplanen.
+  2) Vis behovet (etterspørselen) per fag i timer, slik det står i MERK/konteksten (f.eks. Welder, Steel fixer, Carpenter).
+  3) Vis tilgjengelig kapasitet per fag hvis den finnes i bemanningsplanen, og regn ut differanse/underdekning per fag og totalt.
+  4) Konkluder tydelig: enten «Ja, dere har kapasitet», «Nei, dere mangler ca. X timer / Y personer», eller — hvis tallene ikke finnes — «Jeg finner ikke nok kapasitetstall i bemanningsplanen til å konkludere sikkert», og si hva som mangler.
+  5) Nevn kilden (dokumentnavn og relevant ark/del).
+- Si aldri at du «mangler bemanningsdata» eller «ikke har nok informasjon» for et bemanningsspørsmål før bemanningsplanen faktisk er søkt i (dokumentene i konteksten). Mangler det konkrete tall, forklar nøyaktig hva som mangler — ikke avvis spørsmålet generelt.
+- Ikke ta med konto- eller prosjektoppsummeringer i et bemannings-/kapasitetssvar med mindre brukeren spør om det.`;
 
 /**
  * Build the user-facing turn: the question plus the retrieved data context.

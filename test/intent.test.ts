@@ -54,4 +54,20 @@ describe("detectIntent", () => {
       expect(intent.searchTerms).toContain(term);
     }
   });
+
+  it("detects staffing/capacity intent and does not pull in accounts/projects", () => {
+    const intent = detectIntent(
+      "Vi skal starte nytt prosjekt i august. Ca. 29.000 timer. Fordeling 30% Welder, 20% Stilfixer og resterende Carpenter. Har vi kapasitet?",
+    );
+    expect(intent.capacity).toBe(true);
+    expect(intent.topics).not.toContain("accounts");
+    expect(intent.topics).not.toContain("projects");
+    expect(intent.capacityDemand?.totalHours).toBe(29000);
+  });
+
+  it("does not default to projects+accounts for a bare capacity question", () => {
+    const intent = detectIntent("Har vi kapasitet eller må vi hente inn flere folk?");
+    expect(intent.capacity).toBe(true);
+    expect(intent.topics).toEqual([]);
+  });
 });

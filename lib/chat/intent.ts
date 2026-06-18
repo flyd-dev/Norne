@@ -8,6 +8,11 @@
  */
 
 import { detectAccountLookup } from "@/lib/chat/accountLookup";
+import {
+  detectCapacityIntent,
+  parseCapacityDemand,
+  type CapacityDemand,
+} from "@/lib/chat/capacity";
 
 export type Topic = "accounts" | "projects" | "budgetLines" | "quantities";
 
@@ -36,6 +41,10 @@ export interface DetectedIntent {
   lookupSubject: string | null;
   /** Subject + related accounting terms to drive document/account search. */
   searchTerms: string[];
+  /** True when the question is about staffing/capacity (bemanningsplan). */
+  capacity: boolean;
+  /** Parsed project demand for a capacity question, if any. */
+  capacityDemand: CapacityDemand | null;
 }
 
 /**
@@ -49,6 +58,7 @@ function extractExplicitProjectId(message: string): string | null {
 
 export function detectIntent(message: string): DetectedIntent {
   const lookup = detectAccountLookup(message);
+  const capacity = !lookup.isLookup && detectCapacityIntent(message);
 
   const topics: Topic[] = [];
   for (const topic of Object.keys(KEYWORDS) as Topic[]) {
@@ -61,6 +71,12 @@ export function detectIntent(message: string): DetectedIntent {
     // in projects unless the user clearly asked about a project; an account
     // lookup should not drag in unrelated project summaries.
     if (!topics.includes("accounts")) topics.push("accounts");
+  } else if (capacity) {
+    // Staffing/capacity questions are answered from the uploaded staffing plan,
+    // not Firestore — do NOT drag in account/project summaries.
+    for (let i = topics.length - 1; i >= 0; i--) {
+      if (topics[i] === "accounts" || topics[i] === "projects") topics.splice(i, 1);
+    }
   } else if (topics.length === 0) {
     // If nothing matched, default to projects + accounts as the broad overview.
     topics.push("projects", "accounts");
@@ -76,6 +92,8 @@ export function detectIntent(message: string): DetectedIntent {
     accountLookup: lookup.isLookup,
     lookupSubject: lookup.subject,
     searchTerms: lookup.expandedTerms,
+    capacity,
+    capacityDemand: capacity ? parseCapacityDemand(message) : null,
   };
 }
 

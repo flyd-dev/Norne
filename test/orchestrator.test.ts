@@ -43,9 +43,16 @@ const docs = vi.hoisted(() => ({
     score: number;
   }[],
 }));
+const searchCalls = vi.hoisted(() => ({
+  args: [] as { query: string; opts: unknown }[],
+}));
 vi.mock("@/lib/rag/documentSearch", () => ({
-  searchDocuments: async () => docs.matches,
+  searchDocuments: async (query: string, opts: unknown) => {
+    searchCalls.args.push({ query, opts });
+    return docs.matches;
+  },
   MAX_DOCUMENT_MATCHES: 6,
+  MAX_CAPACITY_MATCHES: 16,
 }));
 
 import { runChat } from "@/lib/chat/orchestrator";
@@ -70,6 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   cap.inputs.length = 0;
   docs.matches = [];
+  searchCalls.args.length = 0;
   mProjects.mockResolvedValue(PROJECTS);
   mAccounts.mockResolvedValue([]);
   mBudget.mockResolvedValue([
@@ -262,5 +270,67 @@ describe("runChat — account-lookup questions", () => {
     expect(userPrompt).not.toContain("Pilestredet");
     expect(userPrompt).not.toContain("Skaidi");
     expect(userPrompt).not.toContain('"projects"');
+  });
+});
+
+describe("runChat — capacity / staffing questions", () => {
+  const CAPACITY_Q =
+    "Vi skal starte nytt prosjekt i august. Ca. 29.000 timer. Fordeling 30% Welder, 20% Stilfixer og resterende Carpenter. Har vi kapasitet eller må vi hente inn flere folk?";
+
+  it("prioritizes the staffing plan and excludes the chart of accounts", async () => {
+    await runChat(CAPACITY_Q, "req");
+    // No Firestore account/project fetch for a capacity question.
+    expect(mAccounts).not.toHaveBeenCalled();
+    expect(mProjects).not.toHaveBeenCalled();
+    // Document search is asked to boost bemanning and exclude the chart of accounts.
+    const call = searchCalls.args.at(-1)!;
+    const opts = call.opts as {
+      limit: number;
+      boostDocumentNames: string[];
+      excludeDocumentNames: string[];
+    };
+    expect(opts.limit).toBe(16);
+    expect(opts.boostDocumentNames).toContain("bemanning");
+    expect(opts.excludeDocumentNames).toContain("kontoplan");
+  });
+
+  it("puts the deterministic demand breakdown in the prompt", async () => {
+    await runChat(CAPACITY_Q, "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    // Demand breakdown 8 700 / 5 800 / 14 500 hours.
+    expect(userPrompt).toContain("8 700");
+    expect(userPrompt).toContain("5 800");
+    expect(userPrompt).toContain("14 500");
+    expect(userPrompt).toMatch(/bemanningsplanen/i);
+  });
+
+  it("includes structured capacity_demand in the model context", async () => {
+    await runChat(CAPACITY_Q, "req");
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).toContain("capacity_demand");
+    expect(userPrompt).toContain('"totalHours": 29000');
+  });
+
+  it("resolves the follow-up 'Du har bemanningsplanen. sjekk den' from history", async () => {
+    await runChat("Du har bemanningsplanen. sjekk den", "req", [
+      { role: "user", content: CAPACITY_Q },
+      { role: "assistant", content: "Jeg har ikke nok informasjon …" },
+    ]);
+    // The follow-up was recognised as a capacity question via the prior turn.
+    expect(mAccounts).not.toHaveBeenCalled();
+    const call = searchCalls.args.at(-1)!;
+    expect(call.query).toContain("29.000");
+    const opts = call.opts as { boostDocumentNames: string[] };
+    expect(opts.boostDocumentNames).toContain("bemanning");
+    // Demand breakdown recovered from the prior question.
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).toContain("8 700");
+  });
+
+  it("includes capacity and follow-up rules in the system prompt", async () => {
+    await runChat("Har vi kapasitet i august?", "req");
+    const sys = cap.inputs.at(-1)!.systemPrompt;
+    expect(sys).toMatch(/bemanningsplan/i);
+    expect(sys).toMatch(/sjekk den/i);
   });
 });

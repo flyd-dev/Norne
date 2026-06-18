@@ -1,7 +1,9 @@
 /**
  * POST /api/chat
  *
- * Body:    { "message": string }
+ * Body:    { "message": string, "history"?: { role, content }[] }
+ *          `history` is optional recent context (used only to resolve follow-up
+ *          references like "sjekk den"); the old { message } shape still works.
  * Returns: {
  *   "answer": string,
  *   "sources": string[],
@@ -30,9 +32,39 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_MESSAGE_LENGTH = 2000;
+/** How many recent messages we accept as follow-up context (last N). */
+const MAX_HISTORY_MESSAGES = 6;
+
+interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 function clientError(message: string, status: number, requestId: string) {
   return NextResponse.json({ error: message, requestId }, { status });
+}
+
+/**
+ * Parse optional `history` from the request body. Invalid/oversized history is
+ * silently ignored (it is only a retrieval hint) — never a hard error, so the
+ * old { message } contract keeps working. Each item is length-capped and only
+ * the last MAX_HISTORY_MESSAGES are kept; nothing here is persisted or logged.
+ */
+function parseHistory(body: unknown): HistoryMessage[] {
+  const raw = (body as { history?: unknown })?.history;
+  if (!Array.isArray(raw)) return [];
+  const items: HistoryMessage[] = [];
+  for (const entry of raw) {
+    const role = (entry as { role?: unknown })?.role;
+    const content = (entry as { content?: unknown })?.content;
+    if ((role === "user" || role === "assistant") && typeof content === "string") {
+      const trimmed = content.trim();
+      if (trimmed.length > 0) {
+        items.push({ role, content: trimmed.slice(0, MAX_MESSAGE_LENGTH) });
+      }
+    }
+  }
+  return items.slice(-MAX_HISTORY_MESSAGES);
 }
 
 export async function POST(request: Request) {
@@ -58,6 +90,9 @@ export async function POST(request: Request) {
     );
   }
 
+  const history = parseHistory(body);
+
+  // Log lengths/counts only — never message or history content.
   logChatRequest(requestId, message.length);
 
   // --- Fail fast on misconfiguration (no secret values in the response) ----
@@ -70,7 +105,7 @@ export async function POST(request: Request) {
 
   // --- Run orchestration ----------------------------------------------------
   try {
-    const result = await runChat(message.trim(), requestId);
+    const result = await runChat(message.trim(), requestId, history);
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     // Log by type only — never the message/stack (may contain sensitive data).

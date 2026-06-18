@@ -29,11 +29,24 @@ import {
 import { detectIntent } from "@/lib/chat/intent";
 import { rankAccounts } from "@/lib/chat/accountLookup";
 import { resolveProject } from "@/lib/chat/projectResolver";
-import { searchDocuments } from "@/lib/rag/documentSearch";
+import {
+  searchDocuments,
+  MAX_CAPACITY_MATCHES,
+  type DocumentMatch,
+} from "@/lib/rag/documentSearch";
 import type { DocumentReference } from "@/lib/documents/types";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
 import { logChatResolved } from "@/lib/logger";
+import {
+  resolveFollowUp,
+  type ChatHistoryMessage,
+} from "@/lib/chat/followup";
+import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
+import {
+  analyzeCapacity,
+  formatCapacityNote,
+} from "@/lib/chat/capacityAnalysis";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -66,8 +79,15 @@ type ContextBlock = Record<string, unknown>;
 export async function runChat(
   message: string,
   requestId: string,
+  history: ChatHistoryMessage[] = [],
 ): Promise<ChatResult> {
-  const intent = detectIntent(message);
+  // Resolve short follow-ups ("sjekk den", "bruk bemanningsplanen") against the
+  // most recent substantive question. Only the retrieval text is enriched; the
+  // user still sees, and we still answer, the original message.
+  const followUp = resolveFollowUp(message, history);
+  const retrievalText = followUp.retrievalText;
+
+  const intent = detectIntent(retrievalText);
 
   // Only include internal document ids in the model context when the user
   // explicitly asks for an id; otherwise they are kept out of the answer entirely
@@ -77,7 +97,15 @@ export async function runChat(
   const firestoreCollections: string[] = [];
   const warnings: string[] = [];
   const context: ContextBlock = {};
-  let note: string | undefined;
+  const notes: string[] = [];
+
+  if (followUp.isFollowUp && followUp.priorQuestion) {
+    notes.push(
+      `Dette er et oppfølgingsspørsmål. Det viser til det forrige spørsmålet: ` +
+        `«${followUp.priorQuestion}». Bruk det forrige spørsmålet og de ` +
+        `opplastede dokumentene i konteksten for å svare — ikke be brukeren gjenta seg.`,
+    );
+  }
 
   // --- Accounts -------------------------------------------------------------
   if (intent.topics.includes("accounts")) {
@@ -141,7 +169,7 @@ export async function runChat(
 
     if (resolution.status !== "resolved") {
       warnings.push(resolution.message);
-      note = resolution.message;
+      notes.push(resolution.message);
       // Always expose the projects list so the model can help the user choose.
       // (projects is already recorded in firestoreCollections above.)
       if (!context.projects) {
@@ -184,13 +212,44 @@ export async function runChat(
   // For account-posting questions, expand the query with related accounting
   // terms (synonyms + category words) and an anchor toward the chart of accounts,
   // so the closest matching account is found even when the exact word is absent.
-  let searchQuery = message;
-  if (intent.accountLookup) {
-    searchQuery = [message, ...intent.searchTerms, "kontoplan", "konto"].join(
-      " ",
-    );
+  let matches: DocumentMatch[];
+  if (intent.capacity) {
+    // Staffing/capacity question: search the staffing plan aggressively. Boost
+    // the bemanningsplan document, capacity-related sheets and role/month terms;
+    // exclude the chart of accounts; pull more chunks than usual.
+    const demand = intent.capacityDemand;
+    const roleTerms = demand?.roles.map((r) => r.role.toLowerCase()) ?? [];
+    const monthTerm = demand?.startMonth ? [demand.startMonth] : [];
+    const searchQuery = [
+      retrievalText,
+      "bemanningsplan kapasitet tilgjengelig timer rotasjonsplan bemanning ressurser fordeling",
+      ...roleTerms,
+      ...monthTerm,
+    ].join(" ");
+    matches = await searchDocuments(searchQuery, {
+      limit: MAX_CAPACITY_MATCHES,
+      boostDocumentNames: ["bemanning"],
+      boostSheetNames: [
+        "rotasjonsplan",
+        "bemanning",
+        "kapasitet",
+        "ressurs",
+        "ressurser",
+        "timer",
+        "fordeling",
+      ],
+      boostTerms: [...new Set([...ALL_ROLE_TERMS, ...roleTerms, ...monthTerm])],
+      excludeDocumentNames: ["kontoplan", "chart of accounts"],
+    });
+  } else {
+    let searchQuery = retrievalText;
+    if (intent.accountLookup) {
+      searchQuery = [retrievalText, ...intent.searchTerms, "kontoplan", "konto"].join(
+        " ",
+      );
+    }
+    matches = await searchDocuments(searchQuery);
   }
-  const matches = await searchDocuments(searchQuery);
   if (matches.length > 0) {
     // The model sees chunk text; the client only gets compact references.
     context.documents = matches.map((m) => ({
@@ -210,15 +269,32 @@ export async function runChat(
   }));
   const documentNames = [...new Set(matches.map((m) => m.documentName))];
 
+  // For capacity questions, compute the demand breakdown deterministically and
+  // read whatever availability we can from the retrieved chunks, then hand the
+  // model a structured note so it answers from the staffing plan first.
+  if (intent.capacity && intent.capacityDemand) {
+    const analysis = analyzeCapacity(intent.capacityDemand, matches);
+    notes.push(formatCapacityNote(analysis));
+    context.capacity_demand = {
+      totalHours: analysis.totalDemandHours,
+      startMonth: analysis.startMonth,
+      roles: analysis.demand,
+      ...(analysis.hasAvailability
+        ? { available: analysis.available, gaps: analysis.gaps }
+        : {}),
+    };
+  }
+
   // For account-posting questions, steer the model toward a concrete account
   // answer (closest match if the exact term is missing) rather than a summary.
-  if (intent.accountLookup && !note) {
-    note =
+  if (intent.accountLookup && notes.length === 0) {
+    notes.push(
       `Brukeren spør hva «${intent.lookupSubject}» skal føres på. ` +
-      `Finn den/de best passende kontoen(e) i kontoplanen eller konto-dataene over. ` +
-      `Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. ` +
-      `Finnes ikke «${intent.lookupSubject}» eksakt, si det tydelig og foreslå nærmeste relevante konto. ` +
-      `Ikke ta med prosjektoppsummeringer.`;
+        `Finn den/de best passende kontoen(e) i kontoplanen eller konto-dataene over. ` +
+        `Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. ` +
+        `Finnes ikke «${intent.lookupSubject}» eksakt, si det tydelig og foreslå nærmeste relevante konto. ` +
+        `Ikke ta med prosjektoppsummeringer.`,
+    );
   }
 
   // --- Logging (safe: ids/intent/collections only) -------------------------
@@ -226,6 +302,7 @@ export async function runChat(
 
   // --- Ask the model (via the pluggable provider) --------------------------
   const contextJson = JSON.stringify(context, null, 2);
+  const note = notes.length > 0 ? notes.join("\n\n") : undefined;
   const userPrompt = buildUserPrompt(message, contextJson, note);
 
   const provider = getLLMProvider();
