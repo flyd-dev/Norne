@@ -226,6 +226,14 @@ export default function Chat() {
       <div className="shell">
         <header className="header">
           <div className="brand">
+            <img
+              className="header-logo"
+              src="/norne-logo-transparent.png"
+              alt="Nornebygg"
+              width={112}
+              height={62}
+            />
+            <span className="brand-rule" aria-hidden="true" />
             <div>
               <h1>Norne Assistent</h1>
               <p>Spør om prosjekter, dokumenter, budsjettlinjer og mengder.</p>

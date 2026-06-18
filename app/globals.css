@@ -110,12 +110,21 @@ body {
   min-width: 0;
 }
 
-.logo {
+/* Brand lockup: white logo + thin rule + product title */
+.header-logo {
   flex: none;
-  height: 30px;
-  width: auto;
+  width: 112px;
+  height: auto;
   display: block;
   object-fit: contain;
+}
+
+.brand-rule {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 0;
+  background: rgba(243, 239, 232, 0.22);
 }
 
 .brand h1 {
@@ -472,7 +481,8 @@ body {
 
 /* ---------- Empty state / starter chips ---------- */
 .empty {
-  margin: auto;
+  /* sit slightly above center so the area doesn't feel too empty */
+  margin: 7vh auto auto;
   text-align: center;
   max-width: 580px;
   color: var(--muted);
@@ -811,6 +821,12 @@ body {
   }
   .brand p {
     font-size: 12px;
+  }
+  .header-logo {
+    width: 84px;
+  }
+  .brand {
+    gap: 11px;
   }
   .send-btn {
     padding: 11px 16px;

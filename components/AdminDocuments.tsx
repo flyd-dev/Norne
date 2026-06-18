@@ -176,6 +176,14 @@ export default function AdminDocuments() {
       <div className="admin-card">
         <header className="admin-header">
           <div className="brand">
+            <img
+              className="header-logo"
+              src="/norne-logo-transparent.png"
+              alt="Nornebygg"
+              width={112}
+              height={62}
+            />
+            <span className="brand-rule" aria-hidden="true" />
             <div>
               <h1>Dokumentadministrasjon</h1>
               <p>Last opp PDF, DOCX, TXT, CSV eller XLSX. Maks 10 MB per fil.</p>
