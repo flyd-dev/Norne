@@ -15,7 +15,7 @@ reach the browser.
 - **Next.js (App Router)** + **TypeScript**
 - **Firebase Admin SDK** (preferred) or **Firestore REST API** (fallback)
 - **Pluggable LLM provider**: **OpenAI** or **Ollama** (local Llama)
-- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → keyword search (RAG-ready)
+- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → keyword search (RAG-ready), stored in a local JSON file (not Firestore)
 - Server-side route at **`/api/chat`** + admin routes at **`/api/admin/documents`**
 - Simple React chat UI + protected admin upload page at **`/admin/documents`**
 
@@ -64,7 +64,7 @@ lib/
     types.ts             document/chunk types + error types
     extract.ts           text extraction (PDF/DOCX/TXT/CSV/XLSX)
     chunk.ts             text chunking (size + overlap) + metadata
-    store.ts             Firestore persistence for knowledge_documents
+    store.ts             local JSON-file persistence (DOCUMENT_STORE_PATH)
   rag/
     documentSearch.ts    keyword search over stored chunks (vector-search ready)
   admin/
@@ -226,6 +226,7 @@ Required in all cases:
 | `FIREBASE_PROJECT_ID` | Firebase / GCP project id |
 | `LLM_PROVIDER` | `openai` (default) or `ollama` |
 | `ADMIN_UPLOAD_TOKEN` | Optional. Token gating `/admin/documents` uploads; if unset, the admin upload routes are disabled |
+| `DOCUMENT_STORE_PATH` | Optional. Local JSON file for uploaded documents; defaults to `/var/lib/norne-chatbot/knowledge-documents.json` |
 
 Then provide the **LLM provider** config (see *LLM provider* above):
 
@@ -407,16 +408,38 @@ For XLSX, each sheet is extracted separately, preserving the sheet name, headers
 and row values (good for staffing plans / bemanningsplaner). Only the **extracted
 text/chunks are stored** — the original file is never persisted.
 
-### Storage
+### Storage (local file, not Firestore)
 
-```
-knowledge_documents/{documentId}            # metadata: name, fileType, uploadedAt, chunkCount
-knowledge_documents/{documentId}/chunks/... # chunk text + metadata
+Uploaded-document metadata and chunks are stored in a **single local JSON file**
+on the server — **not** in Firestore. Firestore is used only for project data.
+The path is configurable via `DOCUMENT_STORE_PATH` (default
+`/var/lib/norne-chatbot/knowledge-documents.json`); the directory is created
+automatically, and the original uploaded file is never persisted.
+
+```jsonc
+// DOCUMENT_STORE_PATH
+{
+  "documents": [
+    {
+      "id": "…", "name": "bemanningsplan.xlsx", "fileType": "xlsx",
+      "uploadedAt": "2026-01-01T00:00:00Z", "chunkCount": 12,
+      "chunks": [
+        { "documentId": "…", "documentName": "bemanningsplan.xlsx",
+          "fileType": "xlsx", "sheetName": "Bemanning", "chunkIndex": 0,
+          "text": "…", "uploadedAt": "2026-01-01T00:00:00Z" }
+      ]
+    }
+  ]
+}
 ```
 
-Text is split into ~800–1200 char chunks with ~150–250 char overlap; each chunk
-stores `documentId`, `documentName`, `fileType`, `sheetName` (XLSX), `chunkIndex`,
-`text` and `uploadedAt`.
+Text is split into ~800–1200 char chunks with ~150–250 char overlap.
+
+> **Why local file?** For this demo, Firestore security rules block the new
+> document collection. Local JSON storage avoids that entirely. Trade-offs: the
+> store lives on one server (not shared across instances) and is not backed up by
+> Firestore — fine for a single-VPS demo. To productionize, move it to Firestore
+> (Admin SDK) or object storage and reimplement `lib/documents/store.ts`.
 
 ### How search works (current limitations)
 
@@ -532,6 +555,11 @@ Covered:
 - **Chunking** (`test/chunk.test.ts`) — size/overlap and chunk metadata.
 - **Document extraction** (`test/documentExtract.test.ts`) — TXT/CSV/XLSX
   extraction and unsupported-type rejection.
+- **Local document store** (`test/documentStore.test.ts`) — auto-creates the
+  directory/file, persists metadata + chunks, lists/searches/replaces/deletes.
+- **Admin routes** (`test/admin-documents.test.ts`) — empty store → `[]`, auth
+  (401/503), filesystem-permission error handling, and `admin_documents_error`
+  logging (not `chat_error`).
 - **Document search** (`test/documentSearch.test.ts`) — relevance ranking,
   result limit, and stopword-only queries.
 - **API validation** (`test/api-chat.test.ts`) — empty/missing message and bad
@@ -578,6 +606,9 @@ Covered:
   base* above — no semantic/synonym matching yet, and all chunks are scanned per
   query (fine for modest volumes).
 - **Admin upload uses a single shared token.** No per-user admin accounts/roles.
+- **Uploaded documents live in a local JSON file on one server** (not Firestore,
+  not shared across instances, not backed up). Fine for a single-VPS demo; move
+  to a shared store to productionize.
 
 ---
 

@@ -6,8 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { adminConfigured, isAdminAuthorized } from "@/lib/admin/auth";
-import { deleteDocument } from "@/lib/documents/store";
-import { isPermissionDenied } from "@/lib/firestore/types";
+import { deleteDocument, isFilesystemPermissionError } from "@/lib/documents/store";
 import { logAdminError, newRequestId } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -38,14 +37,14 @@ export async function DELETE(
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
     logAdminError(requestId, "delete", error);
-    if (isPermissionDenied(error)) {
+    if (isFilesystemPermissionError(error)) {
       return NextResponse.json(
         {
           error:
-            "Firestore-tilgang er avvist for «knowledge_documents». Sjekk reglene eller bruk Admin SDK.",
+            "Kan ikke skrive til dokumentlageret på serveren. Sjekk at DOCUMENT_STORE_PATH er skrivbar.",
           requestId,
         },
-        { status: 403 },
+        { status: 500 },
       );
     }
     return NextResponse.json(

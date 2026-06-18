@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the document store so the route never touches Firestore.
+// Mock the document store so the route never touches the real filesystem.
 vi.mock("@/lib/documents/store", () => ({
   listDocuments: vi.fn(),
   saveDocument: vi.fn(),
   deleteDocument: vi.fn(),
   getAllChunks: vi.fn(),
+  isFilesystemPermissionError: (e: unknown) =>
+    ["EACCES", "EPERM", "EROFS"].includes(
+      (e as NodeJS.ErrnoException)?.code ?? "",
+    ),
 }));
 
 import { GET } from "@/app/api/admin/documents/route";
 import { listDocuments } from "@/lib/documents/store";
-import { FirestoreRequestError } from "@/lib/firestore/types";
 
 const mList = vi.mocked(listDocuments);
 const TOKEN = "test-admin-token";
@@ -47,14 +50,14 @@ describe("GET /api/admin/documents", () => {
     expect(body.documents).toEqual([]);
   });
 
-  it("returns a clear 403 admin error on permission denied", async () => {
+  it("returns a clear error when the store file is not writable/readable", async () => {
     mList.mockRejectedValue(
-      new FirestoreRequestError("Firestore REST request failed (HTTP 403).", 403),
+      Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }),
     );
     const res = await GET(authedRequest());
     const body = await res.json();
-    expect(res.status).toBe(403);
-    expect(body.error).toMatch(/knowledge_documents/);
+    expect(res.status).toBe(500);
+    expect(body.error).toMatch(/DOCUMENT_STORE_PATH/);
     expect(body.requestId).toBeTruthy();
   });
 

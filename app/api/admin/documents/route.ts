@@ -13,17 +13,20 @@ import { NextResponse } from "next/server";
 import { adminConfigured, isAdminAuthorized } from "@/lib/admin/auth";
 import { extractText, fileTypeFromName } from "@/lib/documents/extract";
 import { buildChunks } from "@/lib/documents/chunk";
-import { listDocuments, saveDocument } from "@/lib/documents/store";
+import {
+  isFilesystemPermissionError,
+  listDocuments,
+  saveDocument,
+} from "@/lib/documents/store";
 import {
   ExtractionError,
   UnsupportedFileTypeError,
 } from "@/lib/documents/types";
-import { isPermissionDenied } from "@/lib/firestore/types";
 import { logAdminError, newRequestId } from "@/lib/logger";
 
-const PERMISSION_DENIED_MESSAGE =
-  "Firestore-tilgang er avvist for samlingen «knowledge_documents». " +
-  "Sjekk Firestore-reglene, eller bruk en tjenestekonto (Admin SDK).";
+const FS_PERMISSION_MESSAGE =
+  "Kan ikke lese/skrive dokumentlageret på serveren. Sjekk at " +
+  "DOCUMENT_STORE_PATH er skrivbar for app-prosessen.";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,15 +53,15 @@ export async function GET(request: Request) {
 
   const requestId = newRequestId();
   try {
-    // An empty / non-existent knowledge_documents collection yields [] (not 500).
+    // An empty / missing store file yields [] (not 500).
     const documents = await listDocuments();
     return NextResponse.json({ documents }, { status: 200 });
   } catch (error) {
     logAdminError(requestId, "list", error);
-    if (isPermissionDenied(error)) {
+    if (isFilesystemPermissionError(error)) {
       return NextResponse.json(
-        { error: PERMISSION_DENIED_MESSAGE, requestId },
-        { status: 403 },
+        { error: FS_PERMISSION_MESSAGE, requestId },
+        { status: 500 },
       );
     }
     return NextResponse.json(
@@ -159,10 +162,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     logAdminError(requestId, "upload", error);
-    if (isPermissionDenied(error)) {
+    if (isFilesystemPermissionError(error)) {
       return NextResponse.json(
-        { error: PERMISSION_DENIED_MESSAGE, requestId },
-        { status: 403 },
+        { error: FS_PERMISSION_MESSAGE, requestId },
+        { status: 500 },
       );
     }
     return NextResponse.json(

@@ -1,91 +1,139 @@
 /**
- * Firestore persistence for the document knowledge base.
+ * Local filesystem persistence for the document knowledge base.
  *
- *   knowledge_documents/{documentId}            -> metadata
- *   knowledge_documents/{documentId}/chunks/... -> chunks
+ * Uploaded documents are stored as a single JSON file on the server
+ * (DOCUMENT_STORE_PATH, default /var/lib/norne-chatbot/knowledge-documents.json)
+ * — NOT in Firestore. Firestore remains in use only for project data.
  *
- * Backend-agnostic: uses the shared FirestoreClient (Admin SDK or REST). Only
- * extracted text/chunks are stored — never the original uploaded file.
+ * Only extracted text/chunks are stored; the original uploaded file is never
+ * persisted. The store directory is created automatically if missing.
  */
 
 import "server-only";
-import { getFirestoreClient } from "@/lib/firestore/client";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { env } from "@/lib/env";
 import type {
   DocumentChunk,
   DocumentRecord,
   StoredChunk,
 } from "@/lib/documents/types";
 
-const DOCS = "knowledge_documents";
-const CHUNKS = "chunks";
-
-/** Persist a document's metadata plus its chunks. */
-export async function saveDocument(
-  meta: {
-    id: string;
-    name: string;
-    fileType: string;
-    uploadedAt: string;
-  },
-  chunks: DocumentChunk[],
-): Promise<void> {
-  const client = getFirestoreClient();
-  await client.createDocument(DOCS, meta.id, {
-    name: meta.name,
-    fileType: meta.fileType,
-    uploadedAt: meta.uploadedAt,
-    chunkCount: chunks.length,
-  });
-  await client.createSubDocuments(
-    DOCS,
-    meta.id,
-    CHUNKS,
-    chunks.map((chunk) => ({
-      // zero-padded so chunks list in order
-      id: String(chunk.chunkIndex).padStart(6, "0"),
-      data: { ...chunk },
-    })),
-  );
+interface StoredDocument {
+  id: string;
+  name: string;
+  fileType: string;
+  uploadedAt: string;
+  chunkCount: number;
+  chunks: DocumentChunk[];
 }
 
-/** List all knowledge documents (metadata only). */
+interface StoreFile {
+  documents: StoredDocument[];
+}
+
+function storePath(): string {
+  return env.documents.storePath();
+}
+
+async function readStore(): Promise<StoreFile> {
+  try {
+    const raw = await readFile(storePath(), "utf8");
+    const parsed = JSON.parse(raw) as StoreFile;
+    if (!parsed || !Array.isArray(parsed.documents)) return { documents: [] };
+    return parsed;
+  } catch (error) {
+    // Missing file → empty store (first run).
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { documents: [] };
+    }
+    throw error;
+  }
+}
+
+async function writeStore(store: StoreFile): Promise<void> {
+  const path = storePath();
+  await mkdir(dirname(path), { recursive: true });
+  // Write to a temp file then rename for an atomic replace.
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(store, null, 2), "utf8");
+  await rename(tmp, path);
+}
+
+// Serialize read-modify-write operations to avoid clobbering on concurrent
+// uploads/deletes (single-process demo scope).
+let lock: Promise<unknown> = Promise.resolve();
+function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = lock.then(fn, fn);
+  lock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** True for filesystem permission/read-only errors (clear admin messaging). */
+export function isFilesystemPermissionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "EACCES" || code === "EPERM" || code === "EROFS";
+}
+
+/** Persist a document's metadata plus its chunks (replacing any with same id). */
+export async function saveDocument(
+  meta: { id: string; name: string; fileType: string; uploadedAt: string },
+  chunks: DocumentChunk[],
+): Promise<void> {
+  await withLock(async () => {
+    const store = await readStore();
+    const documents = store.documents.filter((d) => d.id !== meta.id);
+    documents.push({
+      id: meta.id,
+      name: meta.name,
+      fileType: meta.fileType,
+      uploadedAt: meta.uploadedAt,
+      chunkCount: chunks.length,
+      chunks,
+    });
+    await writeStore({ documents });
+  });
+}
+
+/** List all knowledge documents (metadata only), newest first. */
 export async function listDocuments(): Promise<DocumentRecord[]> {
-  const docs = await getFirestoreClient().listCollection(DOCS);
-  return docs
+  const store = await readStore();
+  return store.documents
     .map((d) => ({
       id: d.id,
-      name: String(d.name ?? ""),
-      fileType: String(d.fileType ?? ""),
-      uploadedAt: String(d.uploadedAt ?? ""),
-      chunkCount: Number(d.chunkCount ?? 0),
+      name: d.name,
+      fileType: d.fileType,
+      uploadedAt: d.uploadedAt,
+      chunkCount: d.chunkCount,
     }))
     .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 }
 
-/** Delete a document and all of its chunks. */
+/** Delete a document and its chunks. */
 export async function deleteDocument(id: string): Promise<void> {
-  await getFirestoreClient().deleteDocumentWithSubcollection(DOCS, id, CHUNKS);
+  await withLock(async () => {
+    const store = await readStore();
+    const documents = store.documents.filter((d) => d.id !== id);
+    await writeStore({ documents });
+  });
 }
 
-/**
- * Load every stored chunk across all documents (for keyword search).
- * Iterates documents then their chunks — works on any backend. Fine for MVP
- * volumes; replace with a vector index for scale.
- */
+/** Load every stored chunk across all documents (for keyword search). */
 export async function getAllChunks(): Promise<StoredChunk[]> {
-  const client = getFirestoreClient();
-  const docs = await client.listCollection(DOCS);
+  const store = await readStore();
   const all: StoredChunk[] = [];
-  for (const doc of docs) {
-    const chunks = await client.listSubcollection(DOCS, doc.id, CHUNKS);
-    for (const c of chunks) {
+  for (const doc of store.documents) {
+    for (const c of doc.chunks) {
       all.push({
-        documentId: String(c.documentId ?? doc.id),
-        documentName: String(c.documentName ?? doc.name ?? ""),
-        fileType: String(c.fileType ?? doc.fileType ?? ""),
-        sheetName: c.sheetName == null ? undefined : String(c.sheetName),
-        chunkIndex: Number(c.chunkIndex ?? 0),
-        text: String(c.text ?? ""),
+        documentId: c.documentId,
+        documentName: c.documentName,
+        fileType: c.fileType,
+        sheetName: c.sheetName ?? undefined,
+        chunkIndex: c.chunkIndex,
+        text: c.text,
       });
     }
   }

@@ -54,6 +54,13 @@ export const env = {
     // admin routes are disabled (not the chatbot). Never sent to the browser.
     uploadToken: () => readOptional("ADMIN_UPLOAD_TOKEN"),
   },
+  documents: {
+    // Local JSON file holding uploaded-document metadata + chunks. Uploaded
+    // documents are NOT stored in Firestore (Firestore is only project data).
+    storePath: () =>
+      readOptional("DOCUMENT_STORE_PATH") ??
+      "/var/lib/norne-chatbot/knowledge-documents.json",
+  },
   firebase: {
     projectId: () => requireVar("FIREBASE_PROJECT_ID"),
 
