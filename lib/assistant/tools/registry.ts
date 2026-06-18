@@ -71,6 +71,21 @@ export interface ToolContext {
   getStructuredTables?: () => Promise<import("@/lib/documents/types").StoredStructuredTable[]>;
   /** Already-retrieved document chunks for the current question. */
   documentMatches?: import("@/lib/rag/documentSearch").DocumentMatch[];
+  /**
+   * The project the runner resolved for this turn (sanitized scalar fields +
+   * any `amounts`/`contracts` aggregates), or null when none was resolved. The
+   * project tools read facts off this record — resolution/fetch stays in the
+   * runner so the tools remain pure and testable.
+   */
+  projectRecord?: Record<string, unknown> | null;
+  /** Number/name of the resolved (or referenced) project. */
+  projectRef?: { projectNumber: string | null; projectName: string | null };
+  /** Source labels for the resolved project (e.g. ["Endre API: projects"]). */
+  projectSources?: string[];
+  /** The combined project list, for the project-list tool. */
+  projectList?: import("@/lib/chat/endreSource").ListedProject[];
+  /** Chart-of-accounts rows, for the account tools. */
+  accounts?: import("@/lib/firestore/types").FirestoreDoc[];
 }
 
 /** A minimal, type-erased registry so tools can be looked up by name. */
