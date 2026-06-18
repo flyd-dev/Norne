@@ -18,7 +18,11 @@
 
 import "server-only";
 import type { EndreClient } from "@/lib/endre/client";
-import { resolveProject, type ProjectLike } from "@/lib/chat/projectResolver";
+import {
+  projectLabel,
+  resolveProject,
+  type ProjectLike,
+} from "@/lib/chat/projectResolver";
 import { compactScalars } from "@/lib/firestore/normalize";
 import type { FirestoreDoc } from "@/lib/firestore/types";
 
@@ -480,6 +484,99 @@ export async function buildEndreProjectContext(
     },
     sources: ["Endre API: projects"],
   };
+}
+
+/**
+ * A project reduced to just its number and name, for combining the Endre list
+ * with the Firestore/local list in the `project_list` route. Both fields may be
+ * null when a source omits them.
+ */
+export interface ListedProject {
+  projectNumber: string | null;
+  projectName: string | null;
+  /**
+   * Internal document id, only ever populated for Firestore/local projects (the
+   * caller exposes it solely when the user explicitly asks for an id). Endre ids
+   * are never carried here.
+   */
+  id?: string | null;
+}
+
+/** Read an Endre project's number + display name (never its raw id) for listing. */
+function toListedProject(project: ProjectLike): ListedProject {
+  const rawNumber = project.project_number;
+  const projectNumber =
+    typeof rawNumber === "string" && rawNumber.trim()
+      ? rawNumber.trim()
+      : typeof rawNumber === "number" && Number.isFinite(rawNumber)
+        ? String(rawNumber)
+        : null;
+  const label = projectLabel(project);
+  // projectLabel falls back to the id when no name field exists — never surface
+  // the internal id as a "name".
+  const projectName = label && label !== project.id ? label : null;
+  // Endre ids are never carried into the combined list.
+  return { projectNumber, projectName, id: null };
+}
+
+/**
+ * List every project Endre exposes, reduced to number + name, for the
+ * `project_list` route. Returns null when Endre is unavailable (so the caller can
+ * still answer from Firestore alone). Never throws, never leaks raw payloads/ids.
+ */
+export async function listEndreProjects(
+  client: EndreClient,
+): Promise<ListedProject[] | null> {
+  const listRaw = await safe(() => client.listProjects());
+  if (listRaw === null) return null;
+  return toArray(listRaw)
+    .map(toProjectLike)
+    .filter((p): p is ProjectLike => p !== null)
+    .map(toListedProject);
+}
+
+/**
+ * Combine and deduplicate a set of listed projects. Dedupe key is the project
+ * NUMBER first; when an entry has no number, its normalized (lowercased,
+ * trimmed) NAME is used. Entries that match an existing project merge their
+ * missing field in (e.g. an Endre record without a name + a local record with
+ * one become a single complete entry). Input order is preserved.
+ */
+export function dedupeProjects(projects: ListedProject[]): ListedProject[] {
+  const byNumber = new Map<string, number>();
+  const byName = new Map<string, number>();
+  const out: ListedProject[] = [];
+
+  for (const project of projects) {
+    const number = project.projectNumber?.trim() || null;
+    const name = project.projectName?.trim() || null;
+    const nameKey = name ? name.toLowerCase() : null;
+
+    let idx: number | undefined;
+    if (number && byNumber.has(number)) idx = byNumber.get(number);
+    else if (nameKey && byName.has(nameKey)) idx = byName.get(nameKey);
+
+    if (idx !== undefined) {
+      const existing = out[idx];
+      if (!existing.projectNumber && number) {
+        existing.projectNumber = number;
+        byNumber.set(number, idx);
+      }
+      if (!existing.projectName && name) {
+        existing.projectName = name;
+        byName.set(nameKey!, idx);
+      }
+      if (!existing.id && project.id) existing.id = project.id;
+      continue;
+    }
+
+    const newIdx = out.length;
+    out.push({ projectNumber: number, projectName: name, id: project.id ?? null });
+    if (number) byNumber.set(number, newIdx);
+    if (nameKey) byName.set(nameKey, newIdx);
+  }
+
+  return out;
 }
 
 /**

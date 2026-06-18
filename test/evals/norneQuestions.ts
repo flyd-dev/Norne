@@ -80,6 +80,42 @@ export const EVAL_CASES: EvalCase[] = [
     },
   },
   {
+    name: "project list — which projects exist",
+    question: "Hvilke prosjekter finnes?",
+    expect: {
+      route: "project_list",
+      allowedSources: ["projects"],
+      excludedSources: ["accounts", "staffingPlan"],
+    },
+  },
+  {
+    name: "project list — show all projects",
+    question: "Vis alle prosjekter",
+    expect: {
+      route: "project_list",
+      allowedSources: ["projects"],
+      excludedSources: ["accounts"],
+    },
+  },
+  {
+    name: "account list — which accounts exist",
+    question: "Hvilke kontoer finnes?",
+    expect: {
+      route: "account_list",
+      allowedSources: ["accounts"],
+      excludedSources: ["projects", "staffingPlan"],
+    },
+  },
+  {
+    name: "account list — show the chart of accounts",
+    question: "Vis kontoplanen",
+    expect: {
+      route: "account_list",
+      allowedSources: ["accounts"],
+      excludedSources: ["projects"],
+    },
+  },
+  {
     name: "staffing capacity — new project demand",
     question:
       "Vi starter nytt prosjekt i august. ca 29.000 timer. Fordeling 30% Stilfixer, 60% Carpenter og resterende welder. Har vi kapasitet?",

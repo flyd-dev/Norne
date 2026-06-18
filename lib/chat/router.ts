@@ -20,6 +20,8 @@ import { expandGlossaryTerms } from "@/lib/chat/domainGlossary";
 export type Route =
   | "capabilities_help"
   | "account_lookup"
+  | "account_list"
+  | "project_list"
   | "project_summary"
   | "budget_lines"
   | "quantities"
@@ -77,6 +79,24 @@ const MONTHLY_RE =
 const SUMMARY_RE =
   /\b(oppsummer|oppsummering|sammendrag|summer\s+opp|fortell\s+om|status\s+(?:på|for))\b/i;
 
+/**
+ * Broad project-LIST phrasing ("hvilke prosjekter finnes/har vi/ligger inne/kan
+ * du se", "vis/list (alle) prosjekter", "hva finnes av prosjekter"). This is a
+ * list of every project, NOT a summary of one specific project — so it combines
+ * Endre + local sources instead of preferring a single project's Endre record.
+ */
+const PROJECT_LIST_RE =
+  /\bhvilke\s+prosjekter\b|\b(vis|list(?:e)?)\s+(?:meg\s+|alle\s+)?prosjekter\b|\bhva\s+finnes\s+av\s+prosjekter\b|\bprosjekter\s+(?:finnes|har\s+vi|ligger\s+inne|kan\s+du\s+se)\b/i;
+
+/**
+ * Broad account/chart-of-accounts LIST phrasing ("hvilke kontoer finnes/har vi",
+ * "vis/list (alle) kontoer", "vis kontoplanen"). Distinct from an account LOOKUP
+ * ("hva fører jeg X på?"): a list asks for the whole chart, so a truncation
+ * warning is meaningful here, while a lookup answers with the closest account.
+ */
+const ACCOUNT_LIST_RE =
+  /\bhvilke\s+kontoer\b|\b(vis|list(?:e)?)\s+(?:meg\s+|alle\s+)?(?:kontoer|kontoplanen?)\b|\bvis\s+kontoplan(?:en)?\b|\bkontoer\s+(?:finnes|har\s+vi)\b|\bhele\s+kontoplanen?\b/i;
+
 function isMonthly(text: string): boolean {
   return MONTHLY_RE.test(text);
 }
@@ -98,6 +118,44 @@ export function routeMessage(
     maxChunks: DEFAULT_MAX_CHUNKS,
     resolvedFromFollowUp,
   };
+
+  // --- project_list ---------------------------------------------------------
+  // A broad "which projects exist?" question. The orchestrator combines Endre
+  // (live) and Firestore/local projects for this route, so both are allowed.
+  if (PROJECT_LIST_RE.test(retrievalText)) {
+    return {
+      ...base,
+      route: "project_list",
+      allowedSources: ["projects"],
+      excludedSources: ["accounts", "budgetLines", "quantities", "staffingPlan"],
+      // A project list must not drag in the staffing plan or the chart of accounts.
+      excludeDocumentNames: ["bemanning", "kontoplan", "chart of accounts"],
+      answerFormat:
+        "List prosjektene fra konteksten (feltet «projects») med prosjektnavn og " +
+        "prosjektnummer slik de står. Dette er en samlet liste fra både Endre og " +
+        "lokale prosjektdata. Ikke legg til vurderinger, fellestrekk eller " +
+        "konto-/bemanningsdata, og ikke vis interne id-er.",
+    };
+  }
+
+  // --- account_list ---------------------------------------------------------
+  // A broad "which accounts exist?" / "vis kontoplanen" question. Unlike an
+  // account lookup, this legitimately shows (part of) the whole chart, so a
+  // truncation warning is allowed here.
+  if (!intent.accountLookup && ACCOUNT_LIST_RE.test(retrievalText)) {
+    return {
+      ...base,
+      route: "account_list",
+      allowedSources: ["accounts"],
+      excludedSources: ["projects", "budgetLines", "quantities", "staffingPlan"],
+      searchTerms: ["kontoplan", "konto"],
+      excludeDocumentNames: ["bemanning"],
+      answerFormat:
+        "List kontoene fra konteksten med kontonummer og kontonavn. Vises bare " +
+        "deler av kontoplanen, si tydelig at det er et utvalg. Ikke ta med " +
+        "prosjekt- eller bemanningsdata.",
+    };
+  }
 
   // --- account_lookup -------------------------------------------------------
   if (intent.accountLookup) {

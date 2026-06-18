@@ -92,6 +92,14 @@ export function logChatPlan(
     fallbackReasons: string[];
     /** What the answer verifier did: "none" | "passed" | "replaced_deterministic". */
     verifierAction?: string;
+    /** Combined project count after Endre+Firestore merge (project_list only). */
+    combinedProjectCount?: number;
+    /** Projects returned by Endre for a project_list question. */
+    endreProjectCount?: number;
+    /** Projects returned by Firestore/local data for a project_list question. */
+    firestoreProjectCount?: number;
+    /** True when an account truncation warning was suppressed on a non-account route. */
+    accountWarningsPruned?: boolean;
   },
 ): void {
   emit("log", { evt: "chat_plan", requestId, ...info });

@@ -306,6 +306,54 @@ describe("runChat — account-lookup questions", () => {
   });
 });
 
+describe("runChat — account-list questions", () => {
+  it("routes 'Hvilke kontoer finnes?' to account_list using the accounts source", async () => {
+    mAccounts.mockResolvedValue([
+      { id: "a1", number: "4000", name: "Varekjøp" },
+      { id: "a2", number: "6570", name: "Driftsmateriell og verneutstyr" },
+    ]);
+    const r = await runChat("Hvilke kontoer finnes?", "req");
+    expect(r.route).toBe("account_list");
+    expect(r.dataUsed.firestoreCollections).toContain("accounts");
+    // A short chart fits, so no truncation warning is emitted.
+    expect(r.warnings.join(" ")).not.toMatch(/Viser kun/);
+    // Projects are not dragged into an account-list answer.
+    expect(mProjects).not.toHaveBeenCalled();
+  });
+
+  it("shows the truncation warning for 'Vis kontoplanen' only when truncated", async () => {
+    // 65 accounts → more than the 50-item cap, so the list is genuinely truncated.
+    mAccounts.mockResolvedValue(
+      Array.from({ length: 65 }, (_, i) => ({
+        id: `a${i}`,
+        number: String(4000 + i),
+        name: `Konto ${i}`,
+      })),
+    );
+    const r = await runChat("Vis kontoplanen", "req");
+    expect(r.route).toBe("account_list");
+    expect(r.warnings.some((w) => /Viser kun 50 av 65 kontoer/.test(w))).toBe(true);
+  });
+
+  it("suppresses the account truncation warning on a non-account route", async () => {
+    // A generic, keyword-free question falls back to projects+accounts; accounts
+    // are incidental, so the "Viser kun …" warning must NOT appear.
+    mAccounts.mockResolvedValue(
+      Array.from({ length: 65 }, (_, i) => ({
+        id: `a${i}`,
+        number: String(4000 + i),
+        name: `Konto ${i}`,
+      })),
+    );
+    const r = await runChat("Hei, kan du fortelle meg litt?", "req");
+    expect(r.route).not.toBe("account_list");
+    expect(r.warnings.join(" ")).not.toMatch(/Viser kun/);
+    expect(r.diagnostics?.accountWarningsPruned).toBe(true);
+    // The incidental accounts source is pruned from the cited sources.
+    expect(r.sources).not.toContain("accounts");
+  });
+});
+
 describe("runChat — capacity / staffing questions", () => {
   const CAPACITY_Q =
     "Vi skal starte nytt prosjekt i august. Ca. 29.000 timer. Fordeling 30% Welder, 20% Stilfixer og resterende Carpenter. Har vi kapasitet eller må vi hente inn flere folk?";

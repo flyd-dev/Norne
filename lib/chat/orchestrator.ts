@@ -52,7 +52,7 @@ import {
   buildProjectMetricAnswer,
   type MetricValueSource,
 } from "@/lib/chat/projectMetricAnswer";
-import { verifyAnswer } from "@/lib/chat/answerVerifier";
+import { verifyAnswer, pruneSources } from "@/lib/chat/answerVerifier";
 import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
 import {
   analyzeCapacity,
@@ -67,7 +67,10 @@ import {
 import { getEndreClient } from "@/lib/endre/client";
 import {
   buildEndreProjectContext,
+  listEndreProjects,
+  dedupeProjects,
   type EndreDiagnostics,
+  type ListedProject,
 } from "@/lib/chat/endreSource";
 import {
   CAPABILITIES_ANSWER,
@@ -105,6 +108,14 @@ export interface ChatDiagnostics {
   fallbackReasons: string[];
   /** What the answer verifier did: "none" | "passed" | "replaced_deterministic". */
   verifierAction: string;
+  /** Projects returned by Endre for a project_list question. */
+  endreProjectCount?: number;
+  /** Projects returned by Firestore/local data for a project_list question. */
+  firestoreProjectCount?: number;
+  /** Combined project count after the Endre+Firestore merge (project_list only). */
+  combinedProjectCount?: number;
+  /** True when an account truncation warning was suppressed on a non-account route. */
+  accountWarningsPruned?: boolean;
 }
 
 export interface ChatResult {
@@ -189,6 +200,15 @@ export async function runChat(
   const fallbackReasons: string[] = [];
   let deterministicAnswerUsed = false;
 
+  // project_list: combine Endre (live) + Firestore/local projects. Tracked here
+  // so the counts can reach diagnostics regardless of which branches run.
+  const isProjectList = decision.route === "project_list";
+  let endreProjectCount = 0;
+  let firestoreProjectCount = 0;
+  let combinedProjectCount = 0;
+  // Set when an account truncation warning was suppressed on a non-account route.
+  let accountWarningsPruned = false;
+
   // Only include internal document ids in the model context when the user
   // explicitly asks for an id; otherwise they are kept out of the answer entirely
   // (ids still live in dataUsed/sources collection paths for internal use).
@@ -234,12 +254,68 @@ export async function runChat(
       context.accounts = accounts
         .slice(0, MAX_ITEMS_PER_SOURCE)
         .map((d) => normalizeAccount(d, includeIds));
+      // The "Viser kun X av Y kontoer" truncation warning is only meaningful when
+      // the user actually asked for the whole chart (account_list). On any other
+      // route accounts are incidental, so suppress it (and record that we did).
       if (accounts.length > MAX_ITEMS_PER_SOURCE) {
-        warnings.push(
-          `Viser kun ${MAX_ITEMS_PER_SOURCE} av ${accounts.length} kontoer.`,
-        );
+        if (decision.route === "account_list") {
+          warnings.push(
+            `Viser kun ${MAX_ITEMS_PER_SOURCE} av ${accounts.length} kontoer.`,
+          );
+        } else {
+          accountWarningsPruned = true;
+        }
       }
     }
+  }
+
+  // --- Project list (combine Endre + Firestore/local) -----------------------
+  // A broad "which projects exist?" question. Endre alone is insufficient — the
+  // current Endre user sees only a subset (e.g. 3025), while 7100/7101 live in
+  // Firestore — so we ALWAYS query both, combine, and dedupe (number first, then
+  // normalized name). Both sources are recorded so the answer cites its origin.
+  const endreSourcesForList: string[] = [];
+  if (isProjectList) {
+    const listedEndre: ListedProject[] = [];
+    const endreClient = getEndreClient();
+    if (endreClient) {
+      const fromEndre = await listEndreProjects(endreClient);
+      if (fromEndre && fromEndre.length > 0) {
+        listedEndre.push(...fromEndre);
+        endreSourcesForList.push("Endre API: projects");
+      }
+    }
+    endreProjectCount = listedEndre.length;
+
+    const fsProjects = await getProjects();
+    firestoreCollections.push(COLLECTIONS.projects);
+    const listedFirestore: ListedProject[] = fsProjects.map((d) => ({
+      projectNumber:
+        d.project_number !== undefined && d.project_number !== null
+          ? String(d.project_number)
+          : null,
+      projectName:
+        typeof d.project_name === "string" && d.project_name.trim()
+          ? d.project_name.trim()
+          : null,
+      id: d.id,
+    }));
+    firestoreProjectCount = listedFirestore.length;
+
+    const combined = dedupeProjects([...listedEndre, ...listedFirestore]);
+    combinedProjectCount = combined.length;
+    // Internal ids are hidden by default; only surfaced when the user explicitly
+    // asked for an id (and only Firestore-sourced entries carry one).
+    context.projects = combined.map((p) => ({
+      ...(includeIds && p.id ? { id: p.id } : {}),
+      ...(p.projectName ? { project_name: p.projectName } : {}),
+      ...(p.projectNumber ? { project_number: p.projectNumber } : {}),
+    }));
+    notes.push(
+      "Feltet «projects» er en samlet liste over prosjekter fra både Endre (live) " +
+        "og lokale prosjektdata, slått sammen med duplikater fjernet. List " +
+        "prosjektnavn og prosjektnummer slik de står — ikke legg til vurderinger.",
+    );
   }
 
   // --- Optional Endre live data (project questions) -------------------------
@@ -307,6 +383,10 @@ export async function runChat(
   let projects: FirestoreDoc[] = [];
   const needProjectsList =
     !endreHandledProjects &&
+    !isProjectList &&
+    // Respect the route: don't pull projects into a route that excludes them
+    // (e.g. account_list reached via the keyword-free projects+accounts fallback).
+    decision.allowedSources.includes("projects") &&
     (intent.topics.includes("projects") || intent.needsProject);
   if (needProjectsList) {
     projects = await getProjects();
@@ -477,8 +557,12 @@ export async function runChat(
   // For account-posting questions, expand the query with related accounting
   // terms (synonyms + category words) and an anchor toward the chart of accounts,
   // so the closest matching account is found even when the exact word is absent.
-  let matches: DocumentMatch[];
-  if (intent.capacity) {
+  let matches: DocumentMatch[] = [];
+  if (isProjectList) {
+    // A combined project list answers from the structured projects field only —
+    // no document chunks (they would just add noise and irrelevant sources).
+    matches = [];
+  } else if (intent.capacity) {
     // Staffing/capacity question: search the staffing plan aggressively. Boost
     // the bemanningsplan document, capacity-related sheets and role/month terms;
     // exclude the chart of accounts; pull more chunks than usual.
@@ -665,7 +749,23 @@ export async function runChat(
 
   // Sources: Firestore collection paths, document names, and any Endre
   // capabilities used — each clearly marked so the answer cites its origin.
-  const sources = [...firestoreCollections, ...documentNames, ...endreSources];
+  // (endreSourcesForList carries the project_list combine; endreSources the
+  // single-project summary path — only one is ever populated per request.)
+  const allEndreSources = [...endreSources, ...endreSourcesForList];
+  const checkedSources = [
+    ...firestoreCollections,
+    ...documentNames,
+    ...allEndreSources,
+  ];
+  // Prune sources that did not contribute / the route excluded (e.g. an Endre
+  // label that produced nothing, or an "accounts" collection pulled in only by
+  // the broad projects+accounts fallback on a project route).
+  const prune = pruneSources(checkedSources, {
+    excludedSources: decision.excludedSources,
+    endreContributed: allEndreSources.length > 0,
+  });
+  const sources = prune.sources;
+  if (prune.prunedAccounts) accountWarningsPruned = true;
 
   const diagnostics: ChatDiagnostics = {
     intent: plan.intent,
@@ -674,11 +774,15 @@ export async function runChat(
     resolvedMetric: plan.metric ?? null,
     confidence: plan.confidence,
     selectedSources: sources,
-    checkedSources: [...firestoreCollections, ...documentNames, ...endreSources],
+    checkedSources,
     answerFound: knownValue !== null || sources.length > 0,
     deterministicAnswerUsed,
     fallbackReasons,
     verifierAction,
+    ...(isProjectList
+      ? { endreProjectCount, firestoreProjectCount, combinedProjectCount }
+      : {}),
+    ...(accountWarningsPruned ? { accountWarningsPruned: true } : {}),
   };
   logChatPlan(requestId, diagnostics);
 

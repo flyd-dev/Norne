@@ -24,9 +24,11 @@ import type { HistoryMessage } from "@/lib/chat/historyFacts";
 
 export type PlanIntent =
   | "capabilities_help"
+  | "project_list"
   | "project_summary"
   | "project_metric"
   | "account_lookup"
+  | "account_list"
   | "staffing_capacity"
   | "monthly_capacity"
   | "document_question"
@@ -62,6 +64,10 @@ function planIntentFrom(
   switch (decision.route) {
     case "account_lookup":
       return "account_lookup";
+    case "account_list":
+      return "account_list";
+    case "project_list":
+      return "project_list";
     case "staffing_capacity":
       return "staffing_capacity";
     case "monthly_capacity":

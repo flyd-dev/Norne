@@ -14,6 +14,7 @@
  */
 
 import type { QuestionPlan } from "@/lib/chat/questionPlanner";
+import type { SourceKind } from "@/lib/chat/router";
 import {
   buildProjectMetricAnswer,
   formatNumberNo,
@@ -91,13 +92,51 @@ export function verifyAnswer(input: VerifyInput): VerifyResult {
   return { ok: true };
 }
 
+/** Maps a route-excluded SourceKind to the source label it appears as. */
+const SOURCE_LABELS: Partial<Record<SourceKind, string>> = {
+  accounts: "accounts",
+  projects: "projects",
+  staffingPlan: "staffingPlan",
+};
+
+export interface PruneOptions {
+  /** SourceKinds the route excluded — their labels are dropped from sources. */
+  excludedSources: SourceKind[];
+  /** True when Endre actually contributed to the answer; false drops Endre labels. */
+  endreContributed: boolean;
+}
+
+export interface PruneResult {
+  sources: string[];
+  /** True when an "accounts" source was pruned (for diagnostics). */
+  prunedAccounts: boolean;
+}
+
 /**
- * Drop sources that are not relevant to the answer. Currently: when the answer
- * was produced from a non-Endre source for a resolved project, an Endre
- * "projects" source that contributed nothing should not be presented as if it
- * were the basis of the answer.
+ * Drop sources that are not relevant to the answer:
+ *   - an Endre "Endre API: …" source that contributed nothing, and
+ *   - a collection label (accounts/projects/…) the route explicitly excluded but
+ *     that was fetched anyway (e.g. the broad projects+accounts fallback).
+ *
+ * Keeps source order; never adds anything.
  */
-export function pruneSources(sources: string[], keepEndre: boolean): string[] {
-  if (keepEndre) return sources;
-  return sources.filter((s) => !s.startsWith("Endre API:"));
+export function pruneSources(
+  sources: string[],
+  opts: PruneOptions,
+): PruneResult {
+  const drop = new Set<string>();
+  for (const kind of opts.excludedSources) {
+    const label = SOURCE_LABELS[kind];
+    if (label) drop.add(label);
+  }
+  let prunedAccounts = false;
+  const pruned = sources.filter((s) => {
+    if (s.startsWith("Endre API:") && !opts.endreContributed) return false;
+    if (drop.has(s)) {
+      if (s === "accounts") prunedAccounts = true;
+      return false;
+    }
+    return true;
+  });
+  return { sources: pruned, prunedAccounts };
 }
