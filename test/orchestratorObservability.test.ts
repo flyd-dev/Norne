@@ -88,6 +88,13 @@ describe("observability — tools run with coverage", () => {
     const runs = r.diagnostics?.toolsRun ?? [];
     expect(runs.some((t) => t.tool === "getAccountForPurchase")).toBe(true);
   });
+
+  it("the runner is planner-of-record: planned tool matches the tool that ran", async () => {
+    store.tables = [monthTable("juli 2026"), monthTable("august 2026")];
+    const r = await runChat("Vis tilgjengelig kapasitet per fag frem til august 2026", "req", []);
+    expect(r.diagnostics?.toolsPlanned).toEqual(["getMonthlyCapacity"]);
+    expect(r.diagnostics?.toolsRun?.map((t) => t.tool)).toEqual(["getMonthlyCapacity"]);
+  });
 });
 
 describe("live ChatState — explicit project focus in diagnostics", () => {

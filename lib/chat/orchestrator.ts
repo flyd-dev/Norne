@@ -98,7 +98,8 @@ import {
 import { deriveConversationState } from "@/lib/chat/conversationState";
 import { deriveChatState } from "@/lib/assistant/state/chatState";
 import { validateToolRuns } from "@/lib/assistant/validate";
-import type { ToolRun } from "@/lib/assistant/runner";
+import { planTurnTools, type ToolRun } from "@/lib/assistant/runner";
+import { buildRegistry } from "@/lib/assistant/tools/index";
 import { decideClarification, isClarificationQuestion } from "@/lib/chat/clarify";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
@@ -154,6 +155,8 @@ export interface ChatDiagnostics {
   stateCapacityScope?: boolean;
   /** Validation verdict over the tool data ("answerable"|"incomplete"|"no_data"|…). */
   validationReason?: string;
+  /** Tools the runner planned for this turn (planner-of-record). */
+  toolsPlanned?: string[];
 }
 
 export interface ChatResult {
@@ -170,6 +173,9 @@ export interface ChatResult {
 }
 
 type ContextBlock = Record<string, unknown>;
+
+/** The assistant tool registry, built once and shared across requests. */
+const toolRegistry = buildRegistry();
 
 export async function runChat(
   message: string,
@@ -322,6 +328,17 @@ export async function runChat(
     isFollowUp: followUp.isFollowUp,
   });
   const historyFacts = extractHistoryFacts(history);
+  // Runner owns the turn's tool decision (planner-of-record). Deterministic in
+  // the live path (provider = null); the LLM tool-choice family-refinement is
+  // available but kept off here so the live path stays deterministic.
+  const toolPlan = await planTurnTools(
+    plan,
+    chatState,
+    { required: false, reason: null },
+    message,
+    toolRegistry,
+    null,
+  );
   const endreHint = {
     projectNumber: plan.entities.projectNumber ?? null,
     projectName: plan.entities.projectName ?? null,
@@ -1187,6 +1204,7 @@ export async function runChat(
       chatState.currentProject?.projectName ??
       null,
     stateCapacityScope: chatState.currentCapacityScope !== null,
+    ...(toolPlan.tools.length > 0 ? { toolsPlanned: toolPlan.tools } : {}),
     ...(isProjectList
       ? { endreProjectCount, firestoreProjectCount, combinedProjectCount }
       : {}),

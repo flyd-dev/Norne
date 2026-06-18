@@ -19,11 +19,37 @@ import {
   type ToolResult,
 } from "@/lib/assistant/tools/registry";
 import type { ToolName } from "@/lib/assistant/tools/index";
-import type { ToolPlan } from "@/lib/assistant/planner";
+import { selectTools, type ToolPlan } from "@/lib/assistant/planner";
+import { resolveToolPlan } from "@/lib/assistant/toolChoice";
+import type { QuestionPlan } from "@/lib/chat/questionPlanner";
+import type { ChatState } from "@/lib/assistant/state/chatState";
+import type { LLMProvider } from "@/lib/llm/types";
 
 export interface ToolRun {
   tool: ToolName;
   result: ToolResult<unknown>;
+}
+
+/**
+ * Plan a turn's TOOLS (plan flow B–E): derive the deterministic tool selection
+ * from the plan + chat state + clarification decision, then — when confidence is
+ * low and a provider is given — let the model refine the choice within the
+ * source-policy family. This is the runner owning the turn's tool decision; the
+ * orchestrator (or a future full runner entry) consumes the returned ToolPlan.
+ */
+export async function planTurnTools(
+  plan: QuestionPlan,
+  chatState: ChatState,
+  clarify: { required: boolean; reason: string | null },
+  message: string,
+  registry: ToolRegistry,
+  provider: LLMProvider | null,
+): Promise<ToolPlan> {
+  const toolPlan = selectTools(plan, chatState, clarify);
+  const descriptions = Object.fromEntries(
+    registry.list().map((t) => [t.name, t.description]),
+  ) as Partial<Record<ToolName, string>>;
+  return resolveToolPlan(toolPlan, message, descriptions, provider);
 }
 
 /** Validate + run one tool by name. Never throws. */
