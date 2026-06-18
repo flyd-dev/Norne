@@ -35,3 +35,6 @@ api-service-account.md
 
 # Internal strategy doc (Brakka) — not part of the chatbot, keep out of the repo.
 CLAUDE.md
+
+# Local document/feedback store (may contain uploaded document contents).
+.data/
