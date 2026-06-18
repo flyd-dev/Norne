@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Norne Assistent",
   description:
     "Intern prosjektassistent — spør om prosjekter, budsjettlinjer og mengder.",
+  icons: {
+    icon: "/brand/norne-symbol-dark.png",
+  },
 };
 
 export default function RootLayout({

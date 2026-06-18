@@ -143,6 +143,13 @@ export default function AdminDocuments() {
     return (
       <div className="admin-app">
         <div className="admin-card admin-gate">
+          <img
+            className="gate-logo"
+            src="/brand/norne-symbol-dark.png"
+            alt="Nornebygg"
+            width={84}
+            height={48}
+          />
           <h1>Dokumentadministrasjon</h1>
           <p>Skriv inn admin-token for å fortsette.</p>
           <form onSubmit={unlock} className="gate-form">
@@ -168,9 +175,18 @@ export default function AdminDocuments() {
     <div className="admin-app">
       <div className="admin-card">
         <header className="admin-header">
-          <div>
-            <h1>Dokumentadministrasjon</h1>
-            <p>Last opp PDF, DOCX, TXT, CSV eller XLSX. Maks 10 MB per fil.</p>
+          <div className="brand">
+            <img
+              className="logo"
+              src="/brand/norne-symbol-light.png"
+              alt="Nornebygg"
+              width={42}
+              height={24}
+            />
+            <div>
+              <h1>Dokumentadministrasjon</h1>
+              <p>Last opp PDF, DOCX, TXT, CSV eller XLSX. Maks 10 MB per fil.</p>
+            </div>
           </div>
           <button className="clear-btn" onClick={lock}>
             Lås
