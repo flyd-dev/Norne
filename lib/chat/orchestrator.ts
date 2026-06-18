@@ -848,7 +848,10 @@ export async function runChat(
       .join("\n");
     const periodNote = bound
       ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
-        `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode. `
+        `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode. ` +
+        `Måneder utenfor perioden er bevisst utelatt: ikke nevn dem i det hele tatt, og ` +
+        `IKKE beskriv dem som «manglende» eller «mangler kapasitetstall». Hvis du nevner ` +
+        `manglende måneder, skal det bare gjelde måneder INNENFOR den etterspurte perioden. `
       : "";
     if (bound && months.length === 0) {
       // A range was stated but no month falls inside it: say so, don't fabricate.
@@ -862,7 +865,8 @@ export async function runChat(
         "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
           `${periodNote}${monthLines}\n` +
           `Kilde: ${structuredAvail!.sources.join(", ") || "bemanningsplan"}. ` +
-          "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor perioden.",
+          "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor " +
+          "perioden, og ikke omtal måneder utenfor perioden som manglende.",
       );
     }
     structuredCapacitySources.push(...structuredAvail!.sources);

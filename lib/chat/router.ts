@@ -255,8 +255,10 @@ export function routeMessage(
         answerFormat:
           "List tilgjengelig kapasitet per måned (og per fag der det finnes) fra " +
           "bemanningsplanen. Oppgi alltid hvilken periode og hvilket dokument/ark " +
-          "tallene er hentet fra. Finnes bare deler av perioden, vis det du har og " +
-          "si hvilke måneder som mangler. Finnes ikke månedlig kapasitet i det hele " +
+          "tallene er hentet fra. Mangler tall for noen måneder INNENFOR den " +
+          "etterspurte perioden, vis det du har og si hvilke av disse månedene som " +
+          "mangler — omtal aldri måneder utenfor perioden som manglende, og ta dem " +
+          "ikke med i svaret. Finnes ikke månedlig kapasitet i det hele " +
           "tatt, si at den mangler — ikke fyll inn nuller. " +
           (hasRealDemand
             ? "Et behov er oppgitt; du kan sammenligne tilgjengelig kapasitet mot det."
