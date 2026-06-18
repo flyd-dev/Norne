@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildEndreProjectContext } from "@/lib/chat/endreSource";
+import {
+  buildEndreProjectContext,
+  findEndreProjects,
+  type EndreDiagnostics,
+} from "@/lib/chat/endreSource";
 import type { EndreClient } from "@/lib/endre/client";
+
+function freshDiag(): EndreDiagnostics {
+  return {
+    projectQuery: null,
+    attemptedEndre: false,
+    endreFound: false,
+    fallbackReason: null,
+  };
+}
 
 /**
  * A configurable fake EndreClient. Only the methods buildEndreProjectContext
@@ -121,6 +134,90 @@ describe("buildEndreProjectContext — fallback behaviour", () => {
     const client = fakeClient({ listProjects: () => Promise.resolve([]) });
     const result = await buildEndreProjectContext("Hvilke prosjekter finnes?", client);
     expect(result).toBeNull();
+  });
+});
+
+describe("buildEndreProjectContext — diagnostics", () => {
+  it("records attemptedEndre + endreFound + projectQuery when Endre answers", async () => {
+    const client = fakeClient({
+      listProjects: () => Promise.resolve(PROJECTS),
+      getProject: () => Promise.resolve({ id: "P-1", project_name: "Pilestredet" }),
+    });
+    const diag = freshDiag();
+    await buildEndreProjectContext("Oppsummer prosjekt 7100", client, diag);
+    expect(diag.attemptedEndre).toBe(true);
+    expect(diag.endreFound).toBe(true);
+    expect(diag.projectQuery).toBe("7100");
+    expect(diag.fallbackReason).toBeNull();
+  });
+
+  it("flags project_not_found_in_endre when a named project is missing", async () => {
+    const client = fakeClient({ listProjects: () => Promise.resolve(PROJECTS) });
+    const diag = freshDiag();
+    const result = await buildEndreProjectContext(
+      "Oppsummer prosjekt 9999",
+      client,
+      diag,
+    );
+    expect(result).toBeNull();
+    expect(diag.attemptedEndre).toBe(true);
+    expect(diag.endreFound).toBe(false);
+    expect(diag.fallbackReason).toBe("project_not_found_in_endre");
+  });
+
+  it("flags endre_list_unavailable when listProjects fails", async () => {
+    const client = fakeClient({
+      listProjects: () => Promise.reject(new Error("down")),
+    });
+    const diag = freshDiag();
+    await buildEndreProjectContext("Oppsummer prosjekt 7100", client, diag);
+    expect(diag.fallbackReason).toBe("endre_list_unavailable");
+  });
+
+  it("resolves a project whose number lives under a non-standard field name", async () => {
+    // Endre returns the number under `projectNo` — NOT in PROJECT_NAME_FIELDS.
+    const client = fakeClient({
+      listProjects: () =>
+        Promise.resolve([{ id: "P-9", projectNo: 7100, label: "Pilestredet" }]),
+      getProject: () => Promise.resolve({ id: "P-9", label: "Pilestredet" }),
+    });
+    const diag = freshDiag();
+    const result = await buildEndreProjectContext(
+      "Oppsummer prosjekt 7100",
+      client,
+      diag,
+    );
+    expect(result).not.toBeNull();
+    expect(diag.endreFound).toBe(true);
+    expect(result!.sources).toContain("Endre API: projects");
+  });
+});
+
+describe("findEndreProjects — admin debug lookup", () => {
+  it("returns sanitized matches and counts, never ids or secrets", () => {
+    const raw = [
+      { id: "E-1", project_number: 7100, project_name: "Pilestredet", token: "x" },
+      { id: "E-2", project_number: 7200, project_name: "Skaidi" },
+    ];
+    const result = findEndreProjects(raw, "7100");
+    expect(result.total).toBe(2);
+    expect(result.count).toBe(1);
+    expect(result.projects[0].project_name).toBe("Pilestredet");
+    expect(result.projects[0]).not.toHaveProperty("id");
+    expect(result.projects[0]).not.toHaveProperty("token");
+  });
+
+  it("returns all projects when the query is empty", () => {
+    const raw = [{ id: "E-1", project_number: 7100 }];
+    const result = findEndreProjects(raw, "");
+    expect(result.total).toBe(1);
+    expect(result.count).toBe(1);
+  });
+
+  it("matches across any scalar field (e.g. a name substring)", () => {
+    const raw = [{ id: "E-1", project_number: 7100, project_name: "Pilestredet" }];
+    expect(findEndreProjects(raw, "pile").count).toBe(1);
+    expect(findEndreProjects(raw, "nope").count).toBe(0);
   });
 });
 

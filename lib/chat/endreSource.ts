@@ -51,6 +51,34 @@ export interface EndreProjectResult {
   sources: string[];
 }
 
+/**
+ * Mutable diagnostics bag the caller may pass in to learn WHY Endre was or was
+ * not used, without changing the return contract (a non-null result still means
+ * "use Endre", null still means "fall back"). Contains only safe scalars — a
+ * project-number token, booleans, and a coded fallback reason — never payloads,
+ * ids, tokens, or free-text. See `logEndreDiagnostics`.
+ */
+export interface EndreDiagnostics {
+  /** The project-number token we tried to match (e.g. "7100"), or null. */
+  projectQuery: string | null;
+  /** True once the Endre project list call was actually issued. */
+  attemptedEndre: boolean;
+  /** True when Endre produced a usable context block. */
+  endreFound: boolean;
+  /** Coded reason we fell back to Firebase (null when endreFound). */
+  fallbackReason: string | null;
+}
+
+/** Result of the admin debug lookup — sanitized projects only, never raw. */
+export interface EndreProjectDebugResult {
+  /** Total projects returned by Endre (after coercion to an array). */
+  total: number;
+  /** How many matched the query. */
+  count: number;
+  /** Sanitized matching projects (short scalar fields only, no ids/secrets). */
+  projects: Record<string, unknown>[];
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -197,6 +225,39 @@ function referencesSpecificProject(message: string): boolean {
   return /\b\d{3,6}\b/.test(message) || /\b[A-Za-z0-9]{20}\b/.test(message);
 }
 
+/**
+ * Extract the short project-number token a message refers to (e.g. "7100" from
+ * "Oppsummer prosjekt 7100"), or null. Safe to log — it is a project number, not
+ * free-text. Used both for matching and for diagnostics.
+ */
+function extractProjectQuery(message: string): string | null {
+  const match = message.match(/\b\d{3,6}\b/);
+  return match ? match[0] : null;
+}
+
+/**
+ * Resolve a project by exact match of a number token against ANY scalar field,
+ * regardless of that field's name. This makes the integration robust to Endre's
+ * own field naming (project_number vs projectNo vs number vs …): resolveProject
+ * only matches the fixed PROJECT_NAME_FIELDS, so a number under a differently
+ * named field would otherwise be missed and wrongly fall back to Firebase.
+ * Returns the single match, or null when there is no unique match.
+ */
+function matchByNumberToken(
+  projects: ProjectLike[],
+  token: string,
+): ProjectLike | null {
+  const hits = projects.filter((p) =>
+    Object.entries(p).some(
+      ([key, value]) =>
+        key !== "id" &&
+        (typeof value === "string" || typeof value === "number") &&
+        String(value).trim() === token,
+    ),
+  );
+  return hits.length === 1 ? hits[0] : null;
+}
+
 async function buildSingleProjectSummary(
   client: EndreClient,
   project: ProjectLike,
@@ -250,30 +311,89 @@ async function buildSingleProjectSummary(
 export async function buildEndreProjectContext(
   message: string,
   client: EndreClient,
+  diag?: EndreDiagnostics,
 ): Promise<EndreProjectResult | null> {
+  if (diag) {
+    diag.projectQuery = extractProjectQuery(message);
+    diag.attemptedEndre = true;
+  }
+
   const listRaw = await safe(() => client.listProjects());
-  if (listRaw === null) return null; // Endre unavailable → fall back.
+  if (listRaw === null) {
+    if (diag) diag.fallbackReason = "endre_list_unavailable";
+    return null; // Endre unavailable → fall back.
+  }
 
   const projects = toArray(listRaw)
     .map(toProjectLike)
     .filter((p): p is ProjectLike => p !== null);
-  if (projects.length === 0) return null;
+  if (projects.length === 0) {
+    if (diag) diag.fallbackReason = "no_projects_in_endre";
+    return null;
+  }
 
   const resolution = resolveProject(message, null, projects);
   if (resolution.status === "resolved") {
     const project = projects.find((p) => p.id === resolution.projectId);
-    if (project) return buildSingleProjectSummary(client, project);
+    if (project) {
+      if (diag) diag.endreFound = true;
+      return buildSingleProjectSummary(client, project);
+    }
+  }
+
+  // Field-name-agnostic fallback: match the project-number token against any
+  // scalar field, so a number under a non-standard field name still resolves.
+  const token = extractProjectQuery(message);
+  if (token) {
+    const direct = matchByNumberToken(projects, token);
+    if (direct) {
+      if (diag) diag.endreFound = true;
+      return buildSingleProjectSummary(client, direct);
+    }
   }
 
   // A specific project was named but Endre doesn't have it → fall back so
   // Firebase still gets a chance to answer.
-  if (referencesSpecificProject(message)) return null;
+  if (referencesSpecificProject(message)) {
+    if (diag) diag.fallbackReason = "project_not_found_in_endre";
+    return null;
+  }
 
   // General "which projects exist?" question → answer from the Endre list.
+  if (diag) diag.endreFound = true;
   return {
     context: {
       endre_projects: projects.slice(0, MAX_PROJECTS_LISTED).map(withoutId),
     },
     sources: ["Endre API: projects"],
+  };
+}
+
+/**
+ * Admin debug helper: coerce an Endre project-list payload into a sanitized,
+ * query-filtered view. Matching scans every short scalar field (case-insensitive
+ * substring) so it reveals which projects exist and under which field names —
+ * without ever exposing raw payloads, ids, tokens, or credentials (every record
+ * is run through `sanitizeRecord`, which drops nested data and secret-like keys).
+ */
+export function findEndreProjects(
+  listRaw: unknown,
+  query: string,
+): EndreProjectDebugResult {
+  const all = toArray(listRaw).map(sanitizeRecord);
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? all.filter((p) =>
+        Object.values(p).some(
+          (value) =>
+            (typeof value === "string" || typeof value === "number") &&
+            String(value).toLowerCase().includes(q),
+        ),
+      )
+    : all;
+  return {
+    total: all.length,
+    count: matches.length,
+    projects: matches.slice(0, MAX_PROJECTS_LISTED),
   };
 }

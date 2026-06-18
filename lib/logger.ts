@@ -43,6 +43,29 @@ export function logChatError(requestId: string, errorType: string): void {
   emit("error", { evt: "chat_error", requestId, errorType });
 }
 
+/**
+ * Safe diagnostics for the optional Endre live-data source selection.
+ *
+ * Logs ONLY the route, boolean readiness/attempt/found flags, the short project
+ * query token (a project number, never free-text), the capability source labels,
+ * and a coded fallback reason. NEVER logs raw payloads, tokens, credentials, ids,
+ * or any user message content.
+ */
+export function logEndreDiagnostics(
+  requestId: string,
+  info: {
+    route: string;
+    endreReady: boolean;
+    attemptedEndre: boolean;
+    projectQuery: string | null;
+    endreFound: boolean;
+    endreSources: string[];
+    fallbackReason: string | null;
+  },
+): void {
+  emit("log", { evt: "endre_diagnostics", requestId, ...info });
+}
+
 /** Derive a safe error type name from an unknown thrown value. */
 export function errorTypeOf(error: unknown): string {
   if (error instanceof Error) return error.name || "Error";

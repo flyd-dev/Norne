@@ -203,10 +203,11 @@ export function routeMessage(
       ...base,
       route: "project_summary",
       allowedSources: ["projects", "documents"],
-      excludedSources: ["staffingPlan"],
+      excludedSources: ["staffingPlan", "accounts"],
       searchTerms: expandGlossaryTerms(retrievalText),
-      // A project summary should not drag in the staffing plan unless asked.
-      excludeDocumentNames: ["bemanning"],
+      // A project summary should not drag in the staffing plan or the chart of
+      // accounts (kontoplan) unless the user explicitly asks for them.
+      excludeDocumentNames: ["bemanning", "kontoplan", "chart of accounts"],
       answerFormat:
         "Oppsummer prosjektet kun ut fra prosjektdataene i konteksten. Ikke ta " +
         "med urelaterte dokumenter eller bemanningsplanen med mindre brukeren ber " +

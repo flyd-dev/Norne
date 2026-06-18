@@ -38,7 +38,8 @@ import type { DocumentReference } from "@/lib/documents/types";
 import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
-import { logChatResolved } from "@/lib/logger";
+import { logChatResolved, logEndreDiagnostics } from "@/lib/logger";
+import { endreReady } from "@/lib/env";
 import {
   resolveFollowUp,
   type ChatHistoryMessage,
@@ -55,7 +56,10 @@ import {
   type StructuredAvailability,
 } from "@/lib/chat/capacityStructured";
 import { getEndreClient } from "@/lib/endre/client";
-import { buildEndreProjectContext } from "@/lib/chat/endreSource";
+import {
+  buildEndreProjectContext,
+  type EndreDiagnostics,
+} from "@/lib/chat/endreSource";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -165,9 +169,19 @@ export async function runChat(
   const endreSources: string[] = [];
   let endreHandledProjects = false;
   if (decision.route === "project_summary") {
+    // `endreReady()` mirrors what getEndreClient() gates on; logged separately so
+    // diagnostics distinguish "integration off/misconfigured" from "Endre tried
+    // but produced nothing". getEndreClient() returns null in the former case.
+    const ready = endreReady();
     const endreClient = getEndreClient();
+    const diag: EndreDiagnostics = {
+      projectQuery: null,
+      attemptedEndre: false,
+      endreFound: false,
+      fallbackReason: null,
+    };
     if (endreClient) {
-      const endre = await buildEndreProjectContext(message, endreClient);
+      const endre = await buildEndreProjectContext(message, endreClient, diag);
       if (endre) {
         Object.assign(context, endre.context);
         endreSources.push(...endre.sources);
@@ -178,7 +192,22 @@ export async function runChat(
             "spørsmålet. Svar ut fra disse. Ikke gjengi rå felter eller id-er.",
         );
       }
+    } else {
+      // Flag off or credentials missing — getEndreClient() returned null, so no
+      // Endre call was made and we fall back to Firebase/documents.
+      diag.fallbackReason = "endre_client_unavailable";
     }
+    // Safe diagnostics: route, booleans, project-number token, capability labels,
+    // coded fallback reason. No payloads, tokens, credentials, ids, or history.
+    logEndreDiagnostics(requestId, {
+      route: decision.route,
+      endreReady: ready,
+      attemptedEndre: diag.attemptedEndre,
+      projectQuery: diag.projectQuery,
+      endreFound: diag.endreFound,
+      endreSources: [...endreSources],
+      fallbackReason: diag.fallbackReason,
+    });
   }
 
   // We need the projects list to answer project questions OR to resolve a
