@@ -49,6 +49,8 @@ const PROJECT_NUMBER_LABELLED =
 const PROJECT_NUMBER_INLINE = /\bprosjekt\w*\s+(\d{3,6})\b/i;
 // A standalone number, NOT part of a decimal/grouped number (e.g. "29.000").
 const ANY_NUMBER = /(?<![\d.,%])\b(\d{3,6})\b(?![\d.,%])/;
+// A four-digit year (2000–2099) is a time reference, never a project number.
+const YEAR_RE = /^20\d{2}$/;
 
 const PROJECT_NAME_LABELLED =
   /\bprosjekt(?:navn|tittel)\.?\s*[:=]\s*["«]?([^\n,;«»"]+?)["»]?\s*(?:[\n,;]|$)/i;
@@ -56,12 +58,13 @@ const PROJECT_NAME_LABELLED =
 const PROJECT_NAME_EQUALS = /=\s*([A-ZÆØÅ][\wæøåÆØÅ-]+(?:\s+[A-ZÆØÅ][\wæøåÆØÅ-]+)?)/;
 
 function extractProjectNumber(text: string): string | null {
-  return (
+  const labelled =
     text.match(PROJECT_NUMBER_LABELLED)?.[1] ??
-    text.match(PROJECT_NUMBER_INLINE)?.[1] ??
-    text.match(ANY_NUMBER)?.[1] ??
-    null
-  );
+    text.match(PROJECT_NUMBER_INLINE)?.[1];
+  if (labelled) return labelled;
+  const bare = text.match(ANY_NUMBER)?.[1];
+  if (bare && !YEAR_RE.test(bare)) return bare;
+  return null;
 }
 
 function extractProjectName(text: string): string | null {

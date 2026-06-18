@@ -34,6 +34,21 @@ describe("text extraction", () => {
   it("does not treat a bare number as a name", () => {
     expect(extractProjectNameFromText("Oppsummer prosjekt 7100")).toBeNull();
   });
+
+  it("does not read a bare 4-digit year as a project number", () => {
+    expect(
+      extractProjectNumberFromText("Gi meg det du har frem til september 2026"),
+    ).toBeNull();
+    expect(extractProjectNumberFromText("kapasitet ut 2026")).toBeNull();
+  });
+
+  it("still reads a real bare project number that is not a year", () => {
+    expect(extractProjectNumberFromText("se på 7100 takk")).toBe("7100");
+  });
+
+  it("keeps an explicitly labelled number even if it looks like a year", () => {
+    expect(extractProjectNumberFromText("prosjekt 2026")).toBe("2026");
+  });
 });
 
 describe("resolveEntity", () => {

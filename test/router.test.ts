@@ -83,6 +83,23 @@ describe("routeMessage — capacity", () => {
     );
     expect(d.route).toBe("staffing_capacity");
   });
+
+  // A capacity question with NO quantified demand must not ask the model to
+  // produce a behov/differanse analysis or to conclude capacity sufficiency.
+  it("uses a no-demand answer format when no hours/role split is stated", () => {
+    const d = route("Hva er tilgjengelig kapasitet?");
+    expect(d.route).toBe("staffing_capacity");
+    expect(d.answerFormat).toMatch(/IKKE oppgitt et konkret behov/i);
+    expect(d.answerFormat).toMatch(/Differanse: 0/);
+  });
+
+  // The monthly route with no demand must also forbid an unfounded conclusion.
+  it("forbids an unfounded conclusion on a no-demand monthly view", () => {
+    const d = route("Gi meg tilgjengelig kapasitet per måned");
+    expect(d.route).toBe("monthly_capacity");
+    expect(d.answerFormat).toMatch(/IKKE oppgitt et konkret behov/i);
+    expect(d.answerFormat).toMatch(/mangler.*ikke fyll inn nuller/is);
+  });
 });
 
 describe("routeMessage — project / budget / quantities", () => {

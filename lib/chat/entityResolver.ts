@@ -46,6 +46,9 @@ const PROJECT_NUMBER_INLINE = /\bprosjekt\w*\s+(\d{3,6})\b/i;
 // A standalone number, NOT part of a decimal/grouped number (e.g. the "000" in
 // "29.000") and not a percentage.
 const BARE_NUMBER = /(?<![\d.,%])\b(\d{3,6})\b(?![\d.,%])/;
+// A four-digit year (2000–2099). A bare year is a time reference, never a project
+// number — "frem til september 2026" must not resolve to "prosjekt 2026".
+const YEAR_RE = /^20\d{2}$/;
 
 // "<Name> prosjektet" / "prosjekt <Name>" — a capitalised one/two word name.
 const NAME_BEFORE_PROSJEKT =
@@ -55,12 +58,16 @@ const NAME_AFTER_PROSJEKT =
 
 /** Extract a project number explicitly written in the message text. */
 export function extractProjectNumberFromText(text: string): string | null {
-  return (
+  // Labelled/inline forms require the word "prosjekt", so a year there is an
+  // explicit (if odd) project reference and is kept. A BARE number, however, is
+  // only a project number when it is not a 4-digit year.
+  const labelled =
     text.match(PROJECT_NUMBER_LABELLED)?.[1] ??
-    text.match(PROJECT_NUMBER_INLINE)?.[1] ??
-    text.match(BARE_NUMBER)?.[1] ??
-    null
-  );
+    text.match(PROJECT_NUMBER_INLINE)?.[1];
+  if (labelled) return labelled;
+  const bare = text.match(BARE_NUMBER)?.[1];
+  if (bare && !YEAR_RE.test(bare)) return bare;
+  return null;
 }
 
 /**

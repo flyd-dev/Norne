@@ -103,6 +103,13 @@ describe("extractHistoryFacts", () => {
     expect(facts.projectNumber).toBeNull();
   });
 
+  it("does not mistake a bare 4-digit year for a project number", () => {
+    const facts = extractHistoryFacts([
+      { role: "user", content: "Gi meg det du har frem til september 2026" },
+    ]);
+    expect(facts.projectNumber).toBeNull();
+  });
+
   it("returns empty facts for unrelated history", () => {
     const facts = extractHistoryFacts([
       { role: "user", content: "Hei, hvordan går det?" },

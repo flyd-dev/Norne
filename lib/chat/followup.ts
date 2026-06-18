@@ -27,6 +27,13 @@ export interface ResolvedQuery {
   priorQuestion: string | null;
   /** True when the latest message was treated as a follow-up reference. */
   isFollowUp: boolean;
+  /**
+   * True when this turn is an ANSWER to a clarification the assistant just asked.
+   * In that case the prior (pre-clarification) question carries the real
+   * constraints (time range, project, …), so routing should consider the merged
+   * text — not just what the user typed in the short answer.
+   */
+  isClarificationAnswer: boolean;
 }
 
 /**
@@ -83,14 +90,25 @@ export function isFollowUp(message: string): boolean {
  * Resolve the latest message against recent history. When it is a follow-up,
  * the retrieval text becomes "<prior substantive question> <latest message>" so
  * intent detection and document search see the full context.
+ *
+ * `forceFollowUp` makes a turn a follow-up even when it carries no demonstrative
+ * reference of its own — used when the previous assistant turn was a
+ * clarification question, so the short answer ("bemanning/kapasitet") still
+ * inherits the original question's constraints ("frem til september 2026").
  */
 export function resolveFollowUp(
   message: string,
   history: ChatHistoryMessage[] = [],
+  forceFollowUp = false,
 ): ResolvedQuery {
-  const followUp = isFollowUp(message);
+  const followUp = forceFollowUp || isFollowUp(message);
   if (!followUp) {
-    return { retrievalText: message, priorQuestion: null, isFollowUp: false };
+    return {
+      retrievalText: message,
+      priorQuestion: null,
+      isFollowUp: false,
+      isClarificationAnswer: false,
+    };
   }
 
   // Most recent substantive *user* turn before the current message.
@@ -105,12 +123,18 @@ export function resolveFollowUp(
   }
 
   if (!priorQuestion) {
-    return { retrievalText: message, priorQuestion: null, isFollowUp: true };
+    return {
+      retrievalText: message,
+      priorQuestion: null,
+      isFollowUp: true,
+      isClarificationAnswer: forceFollowUp,
+    };
   }
 
   return {
     retrievalText: `${priorQuestion} ${message}`.trim(),
     priorQuestion,
     isFollowUp: true,
+    isClarificationAnswer: forceFollowUp,
   };
 }

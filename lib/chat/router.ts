@@ -213,6 +213,14 @@ export function routeMessage(
       (resolvedFromFollowUp &&
         typeof followUpMessage === "string" &&
         isMonthlyFollowUp(followUpMessage));
+    // A *real* demand is hours or a role split — a bare month/year is NOT a
+    // demand. Without one we must not produce a "behov vs differanse" analysis or
+    // conclude that capacity is (in)sufficient; we only show available capacity.
+    const hasRealDemand = Boolean(
+      intent.capacityDemand &&
+        (intent.capacityDemand.totalHours !== null ||
+          intent.capacityDemand.roles.length > 0),
+    );
     const roleTerms = intent.capacityDemand?.roles.map((r) => r.role) ?? [];
     const monthTerm = intent.capacityDemand?.startMonth
       ? [intent.capacityDemand.startMonth]
@@ -248,7 +256,30 @@ export function routeMessage(
           "List tilgjengelig kapasitet per måned (og per fag der det finnes) fra " +
           "bemanningsplanen. Oppgi alltid hvilken periode og hvilket dokument/ark " +
           "tallene er hentet fra. Finnes bare deler av perioden, vis det du har og " +
-          "si hvilke måneder som mangler. Ikke ta med konto- eller prosjektdata.",
+          "si hvilke måneder som mangler. Finnes ikke månedlig kapasitet i det hele " +
+          "tatt, si at den mangler — ikke fyll inn nuller. " +
+          (hasRealDemand
+            ? "Et behov er oppgitt; du kan sammenligne tilgjengelig kapasitet mot det."
+            : "Det er IKKE oppgitt et konkret behov, så ikke konkluder med at dere " +
+              "«har kapasitet» eller mangler folk, og ikke vis «Behov per fag: 0» " +
+              "eller «Differanse: 0» — vis kun tilgjengelig kapasitet.") +
+          " Ikke ta med konto- eller prosjektdata.",
+      };
+    }
+    if (!hasRealDemand) {
+      // Capacity question without a quantified need (e.g. a clarification answer
+      // "bemanning/kapasitet"): show available capacity only, never invent a need.
+      return {
+        ...shared,
+        route: "staffing_capacity",
+        answerFormat:
+          "Vis tilgjengelig kapasitet per fag (og per måned der det finnes) fra " +
+          "bemanningsplanen, med periode og kilde (dokument/ark). Det er IKKE " +
+          "oppgitt et konkret behov å sammenligne mot, så ikke konkluder med at " +
+          "dere «har kapasitet» eller mangler folk, og ikke vis «Behov per fag: 0» " +
+          "eller «Differanse: 0». Vil brukeren ha en vurdering, be om behovet " +
+          "(timer, fordeling, periode). Mangler tall, si nøyaktig hva som mangler. " +
+          "Ikke ta med konto- eller prosjektdata.",
       };
     }
     return {

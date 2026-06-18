@@ -65,4 +65,31 @@ describe("resolveFollowUp", () => {
     expect(r.priorQuestion).toBeNull();
     expect(r.retrievalText).toBe("sjekk den");
   });
+
+  it("forceFollowUp merges a topic-only clarification answer with the original question", () => {
+    // The user answered a clarification with just a topic word; on its own it is
+    // not a follow-up, but forced (prior assistant turn was a clarification) it
+    // must inherit the original question's time range.
+    const r = resolveFollowUp(
+      "bemanning/kapasitet",
+      [
+        { role: "user", content: "Gi meg det du har frem til september 2026" },
+        { role: "assistant", content: "Jeg trenger litt mer kontekst …" },
+      ],
+      true,
+    );
+    expect(r.isFollowUp).toBe(true);
+    expect(r.isClarificationAnswer).toBe(true);
+    expect(r.priorQuestion).toBe("Gi meg det du har frem til september 2026");
+    expect(r.retrievalText).toContain("frem til september 2026");
+    expect(r.retrievalText).toContain("bemanning/kapasitet");
+  });
+
+  it("without forceFollowUp, the same topic-only answer is not a follow-up", () => {
+    const r = resolveFollowUp("bemanning/kapasitet", [
+      { role: "user", content: "Gi meg det du har frem til september 2026" },
+    ]);
+    expect(r.isFollowUp).toBe(false);
+    expect(r.isClarificationAnswer).toBe(false);
+  });
 });

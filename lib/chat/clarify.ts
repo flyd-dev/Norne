@@ -35,6 +35,16 @@ export const CLARIFICATION_QUESTION =
   "kontoføring eller dokumentinnhold?";
 
 /**
+ * True when a message is (a turn that was) the clarification prompt. Used to
+ * detect that the previous assistant turn asked for clarification, so the current
+ * user turn is a clarification ANSWER and must inherit the original question's
+ * constraints (time range, project, …) instead of being read in isolation.
+ */
+export function isClarificationQuestion(text: string): boolean {
+  return text.trim() === CLARIFICATION_QUESTION;
+}
+
+/**
  * What sort of context a vague message would need:
  *   - "metric"  a bare project metric ("Hva er kontraktsverdien?") — needs a
  *               project in focus.

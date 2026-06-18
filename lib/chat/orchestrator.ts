@@ -86,7 +86,7 @@ import {
   isCapabilitiesQuestion,
 } from "@/lib/chat/capabilities";
 import { deriveConversationState } from "@/lib/chat/conversationState";
-import { decideClarification } from "@/lib/chat/clarify";
+import { decideClarification, isClarificationQuestion } from "@/lib/chat/clarify";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -224,10 +224,26 @@ export async function runChat(
     };
   }
 
+  // Clarification continuation: if the assistant's last turn was the clarification
+  // question, THIS turn is the answer to it. The original (pre-clarification)
+  // question holds the real constraints — a time range, a project — so we force
+  // follow-up resolution to merge them, even though the short answer
+  // ("bemanning/kapasitet") carries no demonstrative reference of its own.
+  let lastAssistant: string | null = null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "assistant") {
+      lastAssistant = history[i].content;
+      break;
+    }
+  }
+  const priorWasClarification = lastAssistant
+    ? isClarificationQuestion(lastAssistant)
+    : false;
+
   // Resolve short follow-ups ("sjekk den", "bruk bemanningsplanen") against the
   // most recent substantive question. Only the retrieval text is enriched; the
   // user still sees, and we still answer, the original message.
-  const followUp = resolveFollowUp(message, history);
+  const followUp = resolveFollowUp(message, history, priorWasClarification);
   const retrievalText = followUp.retrievalText;
 
   const intent = detectIntent(retrievalText);
@@ -236,11 +252,19 @@ export async function runChat(
   // policy. The orchestrator obeys this instead of re-deriving rules inline.
   // The raw new message is passed for follow-ups so a time-bound capacity
   // follow-up ("…frem til september 2026") upgrades to monthly_capacity.
+  //
+  // For a clarification ANSWER the period lives in the inherited prior question,
+  // not in what the user just typed, so the lighter monthly signal is applied to
+  // the merged retrieval text (which carries "frem til september 2026") instead
+  // of the bare answer ("bemanning/kapasitet").
+  const monthlySignalText = followUp.isClarificationAnswer
+    ? retrievalText
+    : message;
   const decision = routeMessage(
     retrievalText,
     intent,
     followUp.isFollowUp,
-    followUp.isFollowUp ? message : undefined,
+    followUp.isFollowUp ? monthlySignalText : undefined,
   );
 
   // A monthly-capacity view reached via a follow-up must answer the month-by-
@@ -761,9 +785,23 @@ export async function runChat(
     structuredAvail = readStructuredAvailability(await getStructuredTables());
   }
 
-  if (intent.capacity && intent.capacityDemand && !suppressDemandAnalysis) {
+  // Track structured-staffing-plan sources that actually fed the answer, so they
+  // (and only they) are cited — a capacity answer must not silently drop the
+  // bemanningsplan it was built from, nor cite anything that didn't contribute.
+  const structuredCapacitySources: string[] = [];
+
+  // A *real* demand is hours or a role split. A bare month/year is NOT a demand,
+  // so it must never trigger the "behov per fag / differanse" analysis — that is
+  // exactly what produced the spurious "Behov per fag: 0" / "Differanse: 0" and
+  // the unfounded "ja, dere har kapasitet" conclusion on a pure availability ask.
+  const hasRealDemand = Boolean(
+    intent.capacityDemand &&
+      (intent.capacityDemand.totalHours !== null ||
+        intent.capacityDemand.roles.length > 0),
+  );
+  if (intent.capacity && hasRealDemand && !suppressDemandAnalysis) {
     const analysis = analyzeCapacity(
-      intent.capacityDemand,
+      intent.capacityDemand!,
       matches,
       structuredAvail?.byRole,
     );
@@ -780,20 +818,26 @@ export async function runChat(
           }
         : {}),
     };
+    if (analysis.availabilitySource === "structured" && structuredAvail) {
+      structuredCapacitySources.push(...structuredAvail.sources);
+    }
   }
 
   // Month-by-month availability (e.g. "tilgjengelig kapasitet hver måned"): only
   // possible from structured rows. Expose it as its own context + note so the
   // model lists per-month figures and always states the period and source.
-  if (intent.capacity && structuredAvail && structuredAvail.byMonth.length > 0) {
+  const monthlyDataAvailable = Boolean(
+    structuredAvail && structuredAvail.byMonth.length > 0,
+  );
+  if (intent.capacity && monthlyDataAvailable) {
     // Deterministically honour a stated time range ("frem til september 2026" =
     // up to AND INCLUDING September). We filter the month list here so the model
     // can only ever see the months inside the range — it never gets a chance to
     // reverse "frem til" into September–December.
     const bound = parseMonthRange(retrievalText);
     const months = bound
-      ? filterMonthsByBound(structuredAvail.byMonth, bound)
-      : structuredAvail.byMonth;
+      ? filterMonthsByBound(structuredAvail!.byMonth, bound)
+      : structuredAvail!.byMonth;
     context.monthly_capacity = months.map((m) => ({
       month: m.month,
       byRole: m.byRole,
@@ -806,11 +850,29 @@ export async function runChat(
       ? `Brukeren ba om perioden ${bound.kind === "upTo" ? "til og med" : bound.kind === "from" ? "fra og med" : "etter"} ` +
         `oppgitt måned. Vis KUN månedene under — de er allerede filtrert til riktig periode. `
       : "";
+    if (bound && months.length === 0) {
+      // A range was stated but no month falls inside it: say so, don't fabricate.
+      notes.push(
+        "Det finnes ingen måneder i bemanningsplanen innenfor den etterspurte " +
+          "perioden. Si tydelig at det ikke finnes månedlig kapasitet for perioden — " +
+          "ikke vis tall for andre måneder og ikke fyll inn nuller.",
+      );
+    } else {
+      notes.push(
+        "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
+          `${periodNote}${monthLines}\n` +
+          `Kilde: ${structuredAvail!.sources.join(", ") || "bemanningsplan"}. ` +
+          "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor perioden.",
+      );
+    }
+    structuredCapacitySources.push(...structuredAvail!.sources);
+  } else if (decision.route === "monthly_capacity") {
+    // A month-by-month view was asked for, but there are no structured monthly
+    // rows. State that monthly capacity is missing — never substitute zeros.
     notes.push(
-      "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
-        `${periodNote}${monthLines}\n` +
-        `Kilde: ${structuredAvail.sources.join(", ") || "bemanningsplan"}. ` +
-        "Oppgi alltid periode og kilde i svaret. Ikke legg til måneder utenfor perioden.",
+      "Det finnes ikke månedlig kapasitet i de strukturerte dataene fra " +
+        "bemanningsplanen. Si tydelig at tilgjengelig kapasitet per måned mangler " +
+        "for den etterspurte perioden. Ikke fyll inn nuller og ikke anslå tall.",
     );
   }
 
@@ -928,9 +990,16 @@ export async function runChat(
   // (endreSourcesForList carries the project_list combine; endreSources the
   // single-project summary path — only one is ever populated per request.)
   const allEndreSources = [...endreSources, ...endreSourcesForList];
+  // Cite the structured staffing-plan documents that actually fed a capacity
+  // answer (deduped against any that already surfaced as document matches), so a
+  // capacity reply credits the bemanningsplan it was built from.
+  const structuredSourcesToCite = [...new Set(structuredCapacitySources)].filter(
+    (s) => !documentNames.includes(s),
+  );
   const checkedSources = [
     ...firestoreCollections,
     ...documentNames,
+    ...structuredSourcesToCite,
     ...allEndreSources,
   ];
   // Prune sources that did not contribute / the route excluded (e.g. an Endre
