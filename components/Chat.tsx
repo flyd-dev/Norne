@@ -17,6 +17,9 @@ interface ChatMessage {
   warnings?: string[];
   firestoreCollections?: string[];
   documents?: DocumentReference[];
+  route?: string;
+  /** The user question this answer responded to (for feedback). */
+  question?: string;
 }
 
 interface ApiResponse {
@@ -27,6 +30,7 @@ interface ApiResponse {
     documents?: DocumentReference[];
   };
   warnings?: string[];
+  route?: string;
   error?: string;
   requestId?: string;
 }
@@ -123,6 +127,100 @@ function renderAnswer(text: string): React.ReactNode {
   return <div className="answer">{blocks}</div>;
 }
 
+/**
+ * Feedback controls under an assistant answer. "Bra svar" stores a thumbs-up;
+ * "Dårlig svar" reveals a textarea asking what the answer should have been. The
+ * payload carries only what the user already saw (question, answer, sources,
+ * route) — no chat history and no document contents.
+ */
+function MessageFeedback({ message }: { message: ChatMessage }) {
+  const [state, setState] = useState<"idle" | "correcting" | "sent">("idle");
+  const [correction, setCorrection] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function send(rating: "good" | "bad", text?: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rating,
+          question: message.question ?? "",
+          answer: message.content,
+          sources: message.sources ?? [],
+          route: message.route ?? null,
+          correction: text ?? null,
+        }),
+      });
+      setState("sent");
+    } catch {
+      // Feedback is best-effort; silently ignore network errors.
+      setState("sent");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (state === "sent") {
+    return <div className="feedback-thanks">Takk for tilbakemeldingen.</div>;
+  }
+
+  return (
+    <div className="feedback">
+      {state === "idle" && (
+        <div className="feedback-buttons">
+          <button
+            className="feedback-btn"
+            onClick={() => void send("good")}
+            disabled={busy}
+          >
+            👍 Bra svar
+          </button>
+          <button
+            className="feedback-btn"
+            onClick={() => setState("correcting")}
+            disabled={busy}
+          >
+            👎 Dårlig svar
+          </button>
+        </div>
+      )}
+      {state === "correcting" && (
+        <div className="feedback-correct">
+          <label htmlFor={`fb-${message.question ?? ""}`}>
+            Hva burde svaret vært?
+          </label>
+          <textarea
+            id={`fb-${message.question ?? ""}`}
+            value={correction}
+            onChange={(e) => setCorrection(e.target.value)}
+            rows={3}
+            placeholder="Beskriv kort hva det riktige svaret er …"
+          />
+          <div className="feedback-buttons">
+            <button
+              className="feedback-btn"
+              onClick={() => void send("bad", correction)}
+              disabled={busy}
+            >
+              Send tilbakemelding
+            </button>
+            <button
+              className="feedback-btn ghost"
+              onClick={() => setState("idle")}
+              disabled={busy}
+            >
+              Avbryt
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -198,6 +296,8 @@ export default function Chat() {
           warnings: data.warnings,
           firestoreCollections: data.dataUsed?.firestoreCollections,
           documents: data.dataUsed?.documents,
+          route: data.route,
+          question: message,
         },
       ]);
     } catch {
@@ -297,16 +397,33 @@ export default function Chat() {
                 )}
 
                 {m.role === "assistant" &&
-                  m.warnings &&
-                  m.warnings.length > 0 && (
-                    <div className="warnings">
-                      {m.warnings.map((w, wi) => (
-                        <div className="warning" key={wi}>
-                          ⚠ {w}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  (() => {
+                    // Keep warnings relevant: truncation notices about accounts/
+                    // projects only make sense for account/project answers. Drop
+                    // them on capacity/document answers so they don't add noise.
+                    const accountish =
+                      m.route === undefined ||
+                      [
+                        "account_lookup",
+                        "project_summary",
+                        "budget_lines",
+                        "quantities",
+                      ].includes(m.route);
+                    const warnings = (m.warnings ?? []).filter((w) => {
+                      const isCountWarning = /^Viser kun \d+ av \d+/.test(w);
+                      return accountish || !isCountWarning;
+                    });
+                    if (warnings.length === 0) return null;
+                    return (
+                      <div className="warnings">
+                        {warnings.map((w, wi) => (
+                          <div className="warning" key={wi}>
+                            ⚠ {w}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                 {m.role === "assistant" &&
                   m.sources &&
@@ -354,6 +471,8 @@ export default function Chat() {
                       )}
                     </details>
                   )}
+
+                {m.role === "assistant" && <MessageFeedback message={m} />}
               </div>
             </div>
           ))}

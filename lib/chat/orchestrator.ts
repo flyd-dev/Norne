@@ -35,6 +35,7 @@ import {
   type DocumentMatch,
 } from "@/lib/rag/documentSearch";
 import type { DocumentReference } from "@/lib/documents/types";
+import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
 import { logChatResolved } from "@/lib/logger";
@@ -46,7 +47,13 @@ import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
 import {
   analyzeCapacity,
   formatCapacityNote,
+  formatHours,
 } from "@/lib/chat/capacityAnalysis";
+import { routeMessage, type Route } from "@/lib/chat/router";
+import {
+  readStructuredAvailability,
+  type StructuredAvailability,
+} from "@/lib/chat/capacityStructured";
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -72,6 +79,8 @@ export interface ChatResult {
   dataUsed: ChatDataUsed;
   /** Non-fatal notices (truncation, ambiguous/missing project, config mode). */
   warnings: string[];
+  /** The route the question was classified into (for feedback + debugging). */
+  route?: Route;
 }
 
 type ContextBlock = Record<string, unknown>;
@@ -88,6 +97,10 @@ export async function runChat(
   const retrievalText = followUp.retrievalText;
 
   const intent = detectIntent(retrievalText);
+
+  // Turn the intent into an explicit route with a fixed source/search/format
+  // policy. The orchestrator obeys this instead of re-deriving rules inline.
+  const decision = routeMessage(retrievalText, intent, followUp.isFollowUp);
 
   // Only include internal document ids in the model context when the user
   // explicitly asks for an id; otherwise they are kept out of the answer entirely
@@ -248,7 +261,14 @@ export async function runChat(
         " ",
       );
     }
-    matches = await searchDocuments(searchQuery);
+    // Honour the route's document exclusions (e.g. account/project answers must
+    // not pull in the staffing plan) and chunk budget.
+    matches = await searchDocuments(searchQuery, {
+      limit: decision.maxChunks,
+      ...(decision.excludeDocumentNames.length > 0
+        ? { excludeDocumentNames: decision.excludeDocumentNames }
+        : {}),
+    });
   }
   if (matches.length > 0) {
     // The model sees chunk text; the client only gets compact references.
@@ -269,36 +289,62 @@ export async function runChat(
   }));
   const documentNames = [...new Set(matches.map((m) => m.documentName))];
 
-  // For capacity questions, compute the demand breakdown deterministically and
-  // read whatever availability we can from the retrieved chunks, then hand the
-  // model a structured note so it answers from the staffing plan first.
+  // For capacity questions, read availability deterministically from STRUCTURED
+  // staffing-plan rows first (falling back to text scraping inside analyzeCapacity
+  // when no structured rows exist), compute the demand breakdown, and hand the
+  // model a structured note so it answers from the staffing plan, not guesswork.
+  let structuredAvail: StructuredAvailability | null = null;
+  if (intent.capacity) {
+    structuredAvail = readStructuredAvailability(await getStructuredTables());
+  }
+
   if (intent.capacity && intent.capacityDemand) {
-    const analysis = analyzeCapacity(intent.capacityDemand, matches);
+    const analysis = analyzeCapacity(
+      intent.capacityDemand,
+      matches,
+      structuredAvail?.byRole,
+    );
     notes.push(formatCapacityNote(analysis));
     context.capacity_demand = {
       totalHours: analysis.totalDemandHours,
       startMonth: analysis.startMonth,
       roles: analysis.demand,
       ...(analysis.hasAvailability
-        ? { available: analysis.available, gaps: analysis.gaps }
+        ? {
+            available: analysis.available,
+            gaps: analysis.gaps,
+            availabilitySource: analysis.availabilitySource,
+          }
         : {}),
     };
   }
 
-  // For account-posting questions, steer the model toward a concrete account
-  // answer (closest match if the exact term is missing) rather than a summary.
-  if (intent.accountLookup && notes.length === 0) {
+  // Month-by-month availability (e.g. "tilgjengelig kapasitet hver måned"): only
+  // possible from structured rows. Expose it as its own context + note so the
+  // model lists per-month figures and always states the period and source.
+  if (intent.capacity && structuredAvail && structuredAvail.byMonth.length > 0) {
+    context.monthly_capacity = structuredAvail.byMonth.map((m) => ({
+      month: m.month,
+      byRole: m.byRole,
+      total: m.total,
+    }));
+    const monthLines = structuredAvail.byMonth
+      .map((m) => `- ${m.month}: ${formatHours(m.total)} timer tilgjengelig`)
+      .join("\n");
     notes.push(
-      `Brukeren spør hva «${intent.lookupSubject}» skal føres på. ` +
-        `Finn den/de best passende kontoen(e) i kontoplanen eller konto-dataene over. ` +
-        `Bruk KUN kontonumre som faktisk står i konteksten — aldri finn på et kontonummer. ` +
-        `Finnes ikke «${intent.lookupSubject}» eksakt, si det tydelig og foreslå nærmeste relevante konto. ` +
-        `Ikke ta med prosjektoppsummeringer.`,
+      "Tilgjengelig kapasitet per måned (strukturert fra bemanningsplanen):\n" +
+        `${monthLines}\n` +
+        `Kilde: ${structuredAvail.sources.join(", ") || "bemanningsplan"}. ` +
+        "Oppgi alltid periode og kilde i svaret.",
     );
   }
 
-  // --- Logging (safe: ids/intent/collections only) -------------------------
-  logChatResolved(requestId, intent.topics, firestoreCollections);
+  // Append the route's answer-format guardrail so the answer is shaped correctly
+  // (concrete account, capacity conclusion, project-only summary, …).
+  notes.push(decision.answerFormat);
+
+  // --- Logging (safe: ids/route/intent/collections only) -------------------
+  logChatResolved(requestId, [decision.route, ...intent.topics], firestoreCollections);
 
   // --- Ask the model (via the pluggable provider) --------------------------
   const contextJson = JSON.stringify(context, null, 2);
@@ -322,5 +368,6 @@ export async function runChat(
     sources,
     dataUsed: { firestoreCollections, documents },
     warnings,
+    route: decision.route,
   };
 }

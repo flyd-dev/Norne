@@ -842,3 +842,69 @@ body {
     height: 20px;
   }
 }
+
+/* ---------- Answer feedback ---------- */
+.feedback {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.feedback-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.feedback-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.feedback-btn:hover {
+  border-color: var(--accent);
+  color: var(--ink-2);
+}
+.feedback-btn.ghost {
+  background: transparent;
+}
+.feedback-correct {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.feedback-correct label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.feedback-correct textarea {
+  font: inherit;
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink-2);
+}
+.feedback-thanks {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 0.85rem;
+  color: var(--ok-ink);
+}
+
+/* ---------- Admin feedback table ---------- */
+.admin-feedback {
+  margin-top: 24px;
+}
+.admin-feedback h2 {
+  font-size: 1.05rem;
+  margin-bottom: 8px;
+}
+.fb-rating-good { color: var(--ok-ink); font-weight: 600; }
+.fb-rating-bad { color: var(--error-ink); font-weight: 600; }

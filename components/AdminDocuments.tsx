@@ -10,6 +10,16 @@ interface DocumentRecord {
   chunkCount: number;
 }
 
+interface FeedbackRecord {
+  timestamp: string;
+  rating: "good" | "bad";
+  question: string;
+  answer: string;
+  sources: string[];
+  route: string | null;
+  correction: string | null;
+}
+
 const TOKEN_KEY = "norne_admin_token";
 const ACCEPT = ".pdf,.docx,.txt,.csv,.xlsx";
 
@@ -22,6 +32,7 @@ export default function AdminDocuments() {
   const [token, setToken] = useState("");
   const [authed, setAuthed] = useState(false);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackRecord[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +71,16 @@ export default function AdminDocuments() {
     [authHeaders],
   );
 
+  const loadFeedback = useCallback(
+    async (t: string): Promise<void> => {
+      const res = await fetch("/api/admin/feedback", { headers: authHeaders(t) });
+      if (!res.ok) return; // feedback view is best-effort; don't block the page
+      const data = await res.json().catch(() => ({}));
+      setFeedback(data.feedback ?? []);
+    },
+    [authHeaders],
+  );
+
   async function unlock(e: React.FormEvent) {
     e.preventDefault();
     if (!token.trim() || busy) return;
@@ -68,6 +89,7 @@ export default function AdminDocuments() {
     if (ok) {
       sessionStorage.setItem(TOKEN_KEY, token.trim());
       setAuthed(true);
+      await loadFeedback(token.trim());
     }
     setBusy(false);
   }
@@ -76,9 +98,29 @@ export default function AdminDocuments() {
     sessionStorage.removeItem(TOKEN_KEY);
     setAuthed(false);
     setDocuments([]);
+    setFeedback([]);
     setToken("");
     setStatus(null);
     setError(null);
+  }
+
+  async function exportFeedback() {
+    if (busy) return;
+    try {
+      const res = await fetch("/api/admin/feedback?export=1", {
+        headers: authHeaders(token),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "norne-feedback.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // best-effort
+    }
   }
 
   async function upload(e: React.FormEvent) {
@@ -248,6 +290,64 @@ export default function AdminDocuments() {
                 ))}
               </tbody>
             </table>
+          )}
+        </div>
+
+        <div className="admin-feedback">
+          <h2>Tilbakemeldinger</h2>
+          <div className="feedback-buttons">
+            <button
+              className="feedback-btn"
+              onClick={() => void loadFeedback(token)}
+              disabled={busy}
+            >
+              Oppdater
+            </button>
+            <button
+              className="feedback-btn"
+              onClick={() => void exportFeedback()}
+              disabled={busy || feedback.length === 0}
+            >
+              Eksporter JSON
+            </button>
+          </div>
+          {feedback.length === 0 ? (
+            <p className="admin-empty">Ingen tilbakemeldinger ennå.</p>
+          ) : (
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Tidspunkt</th>
+                    <th>Vurdering</th>
+                    <th>Rute</th>
+                    <th>Spørsmål</th>
+                    <th>Burde vært</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {feedback.map((f, i) => (
+                    <tr key={`${f.timestamp}-${i}`}>
+                      <td>{formatDate(f.timestamp)}</td>
+                      <td>
+                        <span
+                          className={
+                            f.rating === "good"
+                              ? "fb-rating-good"
+                              : "fb-rating-bad"
+                          }
+                        >
+                          {f.rating === "good" ? "👍 Bra" : "👎 Dårlig"}
+                        </span>
+                      </td>
+                      <td>{f.route ?? "—"}</td>
+                      <td className="doc-name">{f.question}</td>
+                      <td className="doc-name">{f.correction ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 

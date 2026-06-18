@@ -15,8 +15,12 @@ import {
   UnsupportedFileTypeError,
   type ExtractedContent,
   type ExtractedSegment,
+  type StructuredColumns,
+  type StructuredRow,
+  type StructuredTable,
   type SupportedFileType,
 } from "@/lib/documents/types";
+import { normalizeRole } from "@/lib/chat/roles";
 
 /** Determine the supported file type from a filename, or throw. */
 export function fileTypeFromName(fileName: string): SupportedFileType {
@@ -95,9 +99,120 @@ function rowsToText(rows: unknown[][]): string {
   return header + lines.filter((l) => l.trim() !== "").join("\n");
 }
 
-function extractXlsx(buffer: Buffer): ExtractedSegment[] {
+/** Sheet names that signal a staffing/capacity plan worth parsing structurally. */
+const STAFFING_SHEET_RE =
+  /(kapasitetsanalyse|rotasjonsplan|bemanning|ressurs|timer|kapasitet)/i;
+
+/** Header keywords → logical column, checked in order (first match wins). */
+const COLUMN_MATCHERS: { field: keyof StructuredColumns; re: RegExp }[] = [
+  { field: "availableHours", re: /(tilgjengelig|ledig|disponibel|kapasitet|available|free)/i },
+  { field: "assignedHours", re: /(tildelt|planlagt|brukt|allokert|booket|assigned|allocated|planned)/i },
+  { field: "month", re: /(m(å|a)ned|måned|dato|uke|periode|month|date|week|period)/i },
+  { field: "role", re: /(fag|rolle|stilling|disiplin|trade|role|discipline)/i },
+  { field: "person", re: /(navn|person|ressurs|ansatt|montør|name|employee|resource)/i },
+];
+
+/** Parse a Norwegian/English number cell ("1 200", "1.200", "1200") → number. */
+function parseNumberCell(value: string): number | null {
+  const cleaned = value.replace(/[^\d,.\s-]/g, "").trim();
+  if (cleaned === "") return null;
+  // Strip thousands separators (space / dot), keep a trailing decimal comma part.
+  const digits = cleaned.replace(/[\s.](?=\d{3}\b)/g, "").replace(",", ".");
+  const n = Number.parseFloat(digits);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Map a header row to logical columns by keyword. Returns indexes + names. */
+function mapColumns(headers: string[]): {
+  columns: StructuredColumns;
+  index: Partial<Record<keyof StructuredColumns, number>>;
+} {
+  const columns: StructuredColumns = {};
+  const index: Partial<Record<keyof StructuredColumns, number>> = {};
+  headers.forEach((raw, i) => {
+    const header = raw.trim();
+    if (!header) return;
+    for (const { field, re } of COLUMN_MATCHERS) {
+      if (columns[field] !== undefined) continue; // first column of a kind wins
+      if (re.test(header)) {
+        columns[field] = header;
+        index[field] = i;
+        break;
+      }
+    }
+  });
+  return { columns, index };
+}
+
+/** Build a structured table from one sheet's rows, or null if not staffing-like. */
+function structuredFromSheet(
+  sheetName: string,
+  rows: unknown[][],
+): StructuredTable | null {
+  if (rows.length < 2) return null;
+  const headers = rows[0].map((h) => String(h ?? "").trim());
+  const { columns, index } = mapColumns(headers);
+
+  // A sheet qualifies if its name looks like staffing OR it has a capacity-ish
+  // column together with a role/month column — otherwise we leave it as text.
+  const nameLooksStaffing = STAFFING_SHEET_RE.test(sheetName);
+  const hasCapacityCol =
+    columns.availableHours !== undefined || columns.assignedHours !== undefined;
+  const hasContextCol =
+    columns.role !== undefined ||
+    columns.month !== undefined ||
+    columns.person !== undefined;
+  if (!nameLooksStaffing && !(hasCapacityCol && hasContextCol)) return null;
+  // Need at least one usable column to produce anything.
+  if (Object.keys(index).length === 0) return null;
+
+  const at = (row: unknown[], field: keyof StructuredColumns): string => {
+    const i = index[field];
+    return i === undefined ? "" : String(row[i] ?? "").trim();
+  };
+
+  const structuredRows: StructuredRow[] = [];
+  for (const row of rows.slice(1)) {
+    if (!row.some((v) => String(v ?? "").trim() !== "")) continue;
+    const rawRole = at(row, "role") || null;
+    const monthCell = at(row, "month") || null;
+    const personCell = at(row, "person") || null;
+    const available = parseNumberCell(at(row, "availableHours"));
+    const assigned = parseNumberCell(at(row, "assignedHours"));
+    const role = rawRole ? normalizeRole(rawRole) : null;
+    // Skip rows that carry nothing useful.
+    if (
+      !rawRole &&
+      !monthCell &&
+      !personCell &&
+      available === null &&
+      assigned === null
+    ) {
+      continue;
+    }
+    structuredRows.push({
+      month: monthCell,
+      role,
+      rawRole,
+      availableHours: available,
+      assignedHours: assigned,
+      person: personCell,
+    });
+  }
+
+  if (structuredRows.length === 0) return null;
+  return { sheetName, columns, rows: structuredRows };
+}
+
+interface XlsxExtraction {
+  segments: ExtractedSegment[];
+  structured: StructuredTable[];
+}
+
+function extractXlsx(buffer: Buffer): XlsxExtraction {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const segments: ExtractedSegment[] = [];
+  const structured: StructuredTable[] = [];
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, {
@@ -110,8 +225,10 @@ function extractXlsx(buffer: Buffer): ExtractedSegment[] {
     if (text.trim().length > 0) {
       segments.push({ sheetName, text: `Ark: ${sheetName}\n${text}` });
     }
+    const table = structuredFromSheet(sheetName, rows);
+    if (table) structured.push(table);
   }
-  return segments;
+  return { segments, structured };
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
@@ -147,6 +264,7 @@ export async function extractText(
 ): Promise<ExtractedContent> {
   const fileType = fileTypeFromName(fileName);
   let segments: ExtractedSegment[];
+  let structured: StructuredTable[] | undefined;
 
   switch (fileType) {
     case "txt":
@@ -155,9 +273,12 @@ export async function extractText(
     case "csv":
       segments = [{ text: rowsToText(parseCsv(buffer.toString("utf8"))) }];
       break;
-    case "xlsx":
-      segments = extractXlsx(buffer);
+    case "xlsx": {
+      const x = extractXlsx(buffer);
+      segments = x.segments;
+      structured = x.structured.length > 0 ? x.structured : undefined;
       break;
+    }
     case "pdf":
       segments = [{ text: await extractPdf(buffer) }];
       break;
@@ -171,5 +292,5 @@ export async function extractText(
     throw new ExtractionError("Fant ingen tekst å hente ut fra filen.");
   }
 
-  return { fileType, segments };
+  return { fileType, segments, ...(structured ? { structured } : {}) };
 }

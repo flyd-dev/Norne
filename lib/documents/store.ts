@@ -17,6 +17,8 @@ import type {
   DocumentChunk,
   DocumentRecord,
   StoredChunk,
+  StoredStructuredTable,
+  StructuredTable,
 } from "@/lib/documents/types";
 
 interface StoredDocument {
@@ -26,6 +28,8 @@ interface StoredDocument {
   uploadedAt: string;
   chunkCount: number;
   chunks: DocumentChunk[];
+  /** Best-effort structured staffing/capacity tables (XLSX only). */
+  structured?: StructuredTable[];
 }
 
 interface StoreFile {
@@ -82,6 +86,7 @@ export function isFilesystemPermissionError(error: unknown): boolean {
 export async function saveDocument(
   meta: { id: string; name: string; fileType: string; uploadedAt: string },
   chunks: DocumentChunk[],
+  structured?: StructuredTable[],
 ): Promise<void> {
   await withLock(async () => {
     const store = await readStore();
@@ -93,6 +98,7 @@ export async function saveDocument(
       uploadedAt: meta.uploadedAt,
       chunkCount: chunks.length,
       chunks,
+      ...(structured && structured.length > 0 ? { structured } : {}),
     });
     await writeStore({ documents });
   });
@@ -119,6 +125,18 @@ export async function deleteDocument(id: string): Promise<void> {
     const documents = store.documents.filter((d) => d.id !== id);
     await writeStore({ documents });
   });
+}
+
+/** Load every stored structured staffing/capacity table across all documents. */
+export async function getStructuredTables(): Promise<StoredStructuredTable[]> {
+  const store = await readStore();
+  const all: StoredStructuredTable[] = [];
+  for (const doc of store.documents) {
+    for (const table of doc.structured ?? []) {
+      all.push({ ...table, documentId: doc.id, documentName: doc.name });
+    }
+  }
+  return all;
 }
 
 /** Load every stored chunk across all documents (for keyword search). */

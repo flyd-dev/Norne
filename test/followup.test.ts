@@ -16,6 +16,26 @@ describe("isFollowUp", () => {
     expect(isFollowUp(PRIOR)).toBe(false);
     expect(isFollowUp("Hvilke prosjekter finnes?")).toBe(false);
   });
+
+  it("recognises 'gi meg det du har' and 'frem til <måned>' continuations", () => {
+    expect(isFollowUp("Gi meg det du har frem til september 2026")).toBe(true);
+    expect(isFollowUp("vis det du fant")).toBe(true);
+    expect(isFollowUp("frem til desember")).toBe(true);
+  });
+});
+
+describe("resolveFollowUp — continuation of monthly capacity", () => {
+  const MONTHLY = "Kan du gi meg tilgjengelig kapasitet hver måned ut året?";
+  it("merges 'frem til september' with the prior monthly question", () => {
+    const r = resolveFollowUp("Gi meg det du har frem til september 2026", [
+      { role: "user", content: MONTHLY },
+      { role: "assistant", content: "Her er kapasiteten per måned …" },
+    ]);
+    expect(r.isFollowUp).toBe(true);
+    expect(r.priorQuestion).toBe(MONTHLY);
+    expect(r.retrievalText).toContain("hver måned");
+    expect(r.retrievalText).toContain("september");
+  });
 });
 
 describe("resolveFollowUp", () => {

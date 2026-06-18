@@ -18,6 +18,7 @@
  */
 
 import type { FirestoreDoc } from "@/lib/firestore/types";
+import { PPE_TERMS } from "@/lib/chat/domainGlossary";
 
 export interface AccountLookup {
   /** True when the message is a "where do I post X" accounting question. */
@@ -59,17 +60,11 @@ const SUBJECT_STOPWORDS = new Set([
 /**
  * Clusters of related accounting terms. If a subject mentions any word in a
  * cluster, the whole cluster is added to the search so we can reach the right
- * account category even when the exact word is absent from the chart.
+ * account category even when the exact word is absent from the chart. The
+ * protective-gear / HMS cluster is sourced from the shared domain glossary
+ * (lib/chat/domainGlossary.ts) so synonyms stay in one place.
  */
-const SYNONYM_CLUSTERS: string[][] = [
-  // Protective gear / work clothing / HMS — incl. "arbeidshansker".
-  [
-    "arbeidshansker", "hansker", "vernehansker", "verneutstyr",
-    "arbeidsklær", "arbeidstøy", "hms", "hms-utstyr", "sikkerhetsutstyr",
-    "verneklær", "driftsmateriell", "forbruksmateriell", "utstyr",
-    "produksjonsutstyr",
-  ],
-];
+const SYNONYM_CLUSTERS: string[][] = [PPE_TERMS];
 
 function tokenize(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9æøå-]+/gi) ?? []).filter(

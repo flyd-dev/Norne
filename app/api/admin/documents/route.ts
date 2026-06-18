@@ -139,6 +139,7 @@ export async function POST(request: Request) {
     await saveDocument(
       { id: documentId, name: file.name, fileType: content.fileType, uploadedAt },
       chunks,
+      content.structured,
     );
 
     return NextResponse.json(

@@ -35,6 +35,8 @@ export interface CapacityAnalysis {
   gaps: RoleGap[];
   /** True when we could read at least one availability number from the plan. */
   hasAvailability: boolean;
+  /** Where availability came from: structured rows, scraped text, or none. */
+  availabilitySource: "structured" | "text" | "none";
 }
 
 /** Format an hour count with Norwegian thousands spacing: 8700 → "8 700". */
@@ -82,13 +84,26 @@ export function extractAvailableHours(
 }
 
 /**
- * Combine parsed demand with availability read from the retrieved chunks.
+ * Combine parsed demand with availability. Prefers a pre-computed availability
+ * map read deterministically from structured staffing-plan rows; otherwise falls
+ * back to best-effort scraping of the retrieved text chunks.
  */
 export function analyzeCapacity(
   demand: CapacityDemand,
   chunks: { text: string }[],
+  structuredAvailability?: Map<CanonicalRole, number>,
 ): CapacityAnalysis {
-  const availableMap = extractAvailableHours(chunks);
+  const useStructured =
+    structuredAvailability !== undefined && structuredAvailability.size > 0;
+  const availableMap = useStructured
+    ? structuredAvailability!
+    : extractAvailableHours(chunks);
+
+  const availabilitySource: CapacityAnalysis["availabilitySource"] = useStructured
+    ? "structured"
+    : availableMap.size > 0
+      ? "text"
+      : "none";
 
   const available: RoleAvailability[] = CANONICAL_ROLES.filter((r) =>
     availableMap.has(r),
@@ -116,6 +131,7 @@ export function analyzeCapacity(
     available,
     gaps,
     hasAvailability: available.length > 0,
+    availabilitySource,
   };
 }
 
@@ -147,7 +163,11 @@ export function formatCapacityNote(analysis: CapacityAnalysis): string {
   }
 
   if (analysis.hasAvailability) {
-    lines.push("Tilgjengelig kapasitet lest fra bemanningsplanen (ca.):");
+    lines.push(
+      analysis.availabilitySource === "structured"
+        ? "Tilgjengelig kapasitet (lest fra strukturerte rader i bemanningsplanen):"
+        : "Tilgjengelig kapasitet lest fra bemanningsplanen (ca.):",
+    );
     for (const a of analysis.available) {
       lines.push(`- ${a.role}: ${formatHours(a.hours)} timer`);
     }

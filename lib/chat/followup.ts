@@ -40,6 +40,10 @@ const STRONG_PATTERNS: RegExp[] = [
   /\bdu\s+har\s+(den|det|dokumentet|planen|bemanningsplanen)\b/i,
   /\bse\s+(på\s+)?(den|det|dokumentet|planen|bemanningsplanen)\b/i,
   /\b(kan\s+du\s+)?regne\s+på\s+(det|den|dette)\b/i,
+  // Continuation of a previous answer: "gi meg det du har", "vis det du fant".
+  /\b(gi\s+meg\s+|vis\s+(meg\s+)?)?det\s+du\s+(har|fant|nevnte)\b/i,
+  // Narrowing a previous result by period: "frem til september", "fram til 2026".
+  /\b(fram|frem)\s+til\s+\w+/i,
 ];
 
 /**
