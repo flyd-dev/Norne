@@ -28,7 +28,8 @@ import {
 } from "@/lib/firestore/normalize";
 import { detectIntent } from "@/lib/chat/intent";
 import { resolveProject } from "@/lib/chat/projectResolver";
-import { searchDocuments, type DocumentMatch } from "@/lib/rag/documentSearch";
+import { searchDocuments } from "@/lib/rag/documentSearch";
+import type { DocumentReference } from "@/lib/documents/types";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
 import { logChatResolved } from "@/lib/logger";
@@ -43,8 +44,8 @@ const WANTS_IDS =
 export interface ChatDataUsed {
   /** Firestore collection paths the answer is based on. */
   firestoreCollections: string[];
-  /** Document/RAG matches (empty until RAG is implemented). */
-  documents: DocumentMatch[];
+  /** References to document chunks used (no chunk text, for the client). */
+  documents: DocumentReference[];
 }
 
 export interface ChatResult {
@@ -154,11 +155,26 @@ export async function runChat(
     }
   }
 
-  // --- Document / RAG search (placeholder; returns [] for now) --------------
-  const documents: DocumentMatch[] = await searchDocuments(message);
-  if (documents.length > 0) {
-    context.documents = documents;
+  // --- Document / RAG search -----------------------------------------------
+  const matches = await searchDocuments(message);
+  if (matches.length > 0) {
+    // The model sees chunk text; the client only gets compact references.
+    context.documents = matches.map((m) => ({
+      documentName: m.documentName,
+      ...(m.sheetName ? { sheetName: m.sheetName } : {}),
+      chunkIndex: m.chunkIndex,
+      text: m.text,
+    }));
   }
+
+  const documents: DocumentReference[] = matches.map((m) => ({
+    documentId: m.documentId,
+    documentName: m.documentName,
+    fileType: m.fileType,
+    ...(m.sheetName ? { sheetName: m.sheetName } : {}),
+    chunkIndex: m.chunkIndex,
+  }));
+  const documentNames = [...new Set(matches.map((m) => m.documentName))];
 
   // --- Logging (safe: ids/intent/collections only) -------------------------
   logChatResolved(requestId, intent.topics, firestoreCollections);
@@ -176,8 +192,8 @@ export async function runChat(
 
   const answer = raw.trim() || "Jeg har ikke nok informasjon til å svare på det.";
 
-  const sources = [...firestoreCollections];
-  if (documents.length > 0) sources.push("documents");
+  // Sources: Firestore collection paths plus the document names used.
+  const sources = [...firestoreCollections, ...documentNames];
 
   return {
     answer,

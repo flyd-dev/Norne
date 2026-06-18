@@ -31,6 +31,23 @@ vi.mock("@/lib/llm", () => ({
   }),
 }));
 
+// Mock document search so the orchestrator does not hit the store/Firestore.
+const docs = vi.hoisted(() => ({
+  matches: [] as {
+    documentId: string;
+    documentName: string;
+    fileType: string;
+    sheetName?: string;
+    chunkIndex: number;
+    text: string;
+    score: number;
+  }[],
+}));
+vi.mock("@/lib/rag/documentSearch", () => ({
+  searchDocuments: async () => docs.matches,
+  MAX_DOCUMENT_MATCHES: 6,
+}));
+
 import { runChat } from "@/lib/chat/orchestrator";
 import {
   getAccounts,
@@ -52,6 +69,7 @@ const PROJECTS: FirestoreDoc[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   cap.inputs.length = 0;
+  docs.matches = [];
   mProjects.mockResolvedValue(PROJECTS);
   mAccounts.mockResolvedValue([]);
   mBudget.mockResolvedValue([
@@ -148,5 +166,46 @@ describe("runChat — collection tracking", () => {
         }),
       }),
     );
+  });
+
+  it("includes document chunks in context and references in dataUsed", async () => {
+    docs.matches = [
+      {
+        documentId: "DOC1",
+        documentName: "bemanningsplan.xlsx",
+        fileType: "xlsx",
+        sheetName: "Bemanning",
+        chunkIndex: 2,
+        text: "Bemanning uke 12: Kari og Ola.",
+        score: 5,
+      },
+    ];
+
+    const r = await runChat("Hvem er på bemanning uke 12?", "req");
+
+    // The chunk TEXT reaches the model context...
+    const userPrompt = cap.inputs.at(-1)!.userPrompt;
+    expect(userPrompt).toContain("Bemanning uke 12: Kari og Ola.");
+
+    // ...but the client only gets compact references (no chunk text), and the
+    // document name appears in sources.
+    expect(r.dataUsed.documents).toEqual([
+      {
+        documentId: "DOC1",
+        documentName: "bemanningsplan.xlsx",
+        fileType: "xlsx",
+        sheetName: "Bemanning",
+        chunkIndex: 2,
+      },
+    ]);
+    expect(r.sources).toContain("bemanningsplan.xlsx");
+    expect(Array.isArray(r.dataUsed.firestoreCollections)).toBe(true);
+  });
+
+  it("includes the document grounding rules in the system prompt", async () => {
+    await runChat("Hvem er på bemanning?", "req");
+    const sys = cap.inputs.at(-1)!.systemPrompt;
+    expect(sys).toMatch(/opplastet dokument/i);
+    expect(sys).toMatch(/inkonsistent/i);
   });
 });

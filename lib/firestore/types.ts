@@ -33,4 +33,26 @@ export interface FirestoreClient {
     parentId: string,
     subcollection: string,
   ): Promise<FirestoreDoc[]>;
+
+  /** Create or overwrite a single top-level document. */
+  createDocument(
+    collection: string,
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<void>;
+
+  /** Create multiple documents in a subcollection (batched where possible). */
+  createSubDocuments(
+    parentCollection: string,
+    parentId: string,
+    subcollection: string,
+    items: { id: string; data: Record<string, unknown> }[],
+  ): Promise<void>;
+
+  /** Delete a document and all docs in one of its subcollections. */
+  deleteDocumentWithSubcollection(
+    collection: string,
+    id: string,
+    subcollection: string,
+  ): Promise<void>;
 }

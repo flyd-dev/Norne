@@ -2,12 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 
+interface DocumentReference {
+  documentId: string;
+  documentName: string;
+  fileType: string;
+  sheetName?: string;
+  chunkIndex: number;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
   warnings?: string[];
   firestoreCollections?: string[];
+  documents?: DocumentReference[];
 }
 
 interface ApiResponse {
@@ -15,7 +24,7 @@ interface ApiResponse {
   sources?: string[];
   dataUsed?: {
     firestoreCollections?: string[];
-    documents?: unknown[];
+    documents?: DocumentReference[];
   };
   warnings?: string[];
   error?: string;
@@ -182,6 +191,7 @@ export default function Chat() {
           sources: data.sources,
           warnings: data.warnings,
           firestoreCollections: data.dataUsed?.firestoreCollections,
+          documents: data.dataUsed?.documents,
         },
       ]);
     } catch {
@@ -292,15 +302,36 @@ export default function Chat() {
                   )}
 
                 {m.role === "assistant" &&
-                  m.firestoreCollections &&
-                  m.firestoreCollections.length > 0 && (
+                  ((m.firestoreCollections?.length ?? 0) > 0 ||
+                    (m.documents?.length ?? 0) > 0) && (
                     <details className="datasource">
                       <summary>Datagrunnlag</summary>
-                      <ul>
-                        {m.firestoreCollections.map((c) => (
-                          <li key={c}>{c}</li>
-                        ))}
-                      </ul>
+                      {m.firestoreCollections &&
+                        m.firestoreCollections.length > 0 && (
+                          <div className="ds-group">
+                            <div className="ds-group-label">
+                              Firestore-samlinger
+                            </div>
+                            <ul>
+                              {m.firestoreCollections.map((c) => (
+                                <li key={c}>{c}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      {m.documents && m.documents.length > 0 && (
+                        <div className="ds-group">
+                          <div className="ds-group-label">Dokumenter</div>
+                          <ul>
+                            {m.documents.map((d, di) => (
+                              <li key={`${d.documentId}-${d.chunkIndex}-${di}`}>
+                                {d.documentName} (del {d.chunkIndex}
+                                {d.sheetName ? `, ark ${d.sheetName}` : ""})
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </details>
                   )}
               </div>

@@ -32,5 +32,34 @@ export function createAdminFirestoreClient(): FirestoreClient {
         .get();
       return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FirestoreDoc);
     },
+
+    async createDocument(collection, id, data) {
+      await db.collection(collection).doc(id).set(data);
+    },
+
+    async createSubDocuments(parentCollection, parentId, subcollection, items) {
+      const parent = db.collection(parentCollection).doc(parentId);
+      // Firestore batches are limited to 500 writes.
+      const BATCH = 450;
+      for (let i = 0; i < items.length; i += BATCH) {
+        const batch = db.batch();
+        for (const item of items.slice(i, i + BATCH)) {
+          batch.set(parent.collection(subcollection).doc(item.id), item.data);
+        }
+        await batch.commit();
+      }
+    },
+
+    async deleteDocumentWithSubcollection(collection, id, subcollection) {
+      const ref = db.collection(collection).doc(id);
+      const snap = await ref.collection(subcollection).get();
+      const BATCH = 450;
+      for (let i = 0; i < snap.docs.length; i += BATCH) {
+        const batch = db.batch();
+        for (const d of snap.docs.slice(i, i + BATCH)) batch.delete(d.ref);
+        await batch.commit();
+      }
+      await ref.delete();
+    },
   };
 }

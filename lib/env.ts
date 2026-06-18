@@ -49,6 +49,11 @@ export const env = {
     // (e.g. a reverse proxy on a remote VPS). Local Ollama usually has no auth.
     apiKey: () => readOptional("OLLAMA_API_KEY"),
   },
+  admin: {
+    // Token gating the document-upload admin routes. Optional: if unset, the
+    // admin routes are disabled (not the chatbot). Never sent to the browser.
+    uploadToken: () => readOptional("ADMIN_UPLOAD_TOKEN"),
+  },
   firebase: {
     projectId: () => requireVar("FIREBASE_PROJECT_ID"),
 

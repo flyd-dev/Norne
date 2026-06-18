@@ -15,8 +15,17 @@ reach the browser.
 - **Next.js (App Router)** + **TypeScript**
 - **Firebase Admin SDK** (preferred) or **Firestore REST API** (fallback)
 - **Pluggable LLM provider**: **OpenAI** or **Ollama** (local Llama)
-- Server-side route at **`/api/chat`**
-- Simple React chat UI
+- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → keyword search (RAG-ready)
+- Server-side route at **`/api/chat`** + admin routes at **`/api/admin/documents`**
+- Simple React chat UI + protected admin upload page at **`/admin/documents`**
+
+### Added dependencies
+
+| Package | Why |
+|---|---|
+| `xlsx` (SheetJS, from the SheetJS CDN) | Parse XLSX spreadsheets (per-sheet text). Installed from `https://cdn.sheetjs.com/...` because the npm build has an unpatched high-severity advisory. |
+| `mammoth` | Extract raw text from DOCX files. |
+| `pdf-parse` | Extract text from PDF files (imported via its inner `lib/pdf-parse.js`). |
 
 ---
 
@@ -50,19 +59,30 @@ lib/
     intent.ts            detects topics (which collections a question is about)
     projectResolver.ts   resolve project by id / configurable name fields
     prompts.ts           system prompt + prompt builder
-    orchestrator.ts      retrieve relevant data -> minimize -> call LLM provider
+    orchestrator.ts      retrieve relevant data + documents -> minimize -> call LLM
+  documents/
+    types.ts             document/chunk types + error types
+    extract.ts           text extraction (PDF/DOCX/TXT/CSV/XLSX)
+    chunk.ts             text chunking (size + overlap) + metadata
+    store.ts             Firestore persistence for knowledge_documents
   rag/
-    documentSearch.ts    PLACEHOLDER for future document/RAG search
+    documentSearch.ts    keyword search over stored chunks (vector-search ready)
+  admin/
+    auth.ts              bearer-token check for admin routes
+  llm/                   pluggable LLM providers (OpenAI / Ollama)
+app/
+  admin/documents/       protected upload UI
+  api/admin/documents/   upload (POST), list (GET), delete (DELETE)
+components/
+  AdminDocuments.tsx     admin upload/list/delete UI
 test/
-  intent / projectResolver / normalize / orchestrator / llm / api-chat .test.ts
+  intent / projectResolver / normalize / orchestrator / llm / api-chat /
+  chunk / documentExtract / documentSearch .test.ts
 ```
 
-The orchestrator depends only on the `LLMProvider` interface, so the model can be
-swapped via `LLM_PROVIDER` without any orchestrator changes.
-
-The orchestrator already calls `searchDocuments()` on every request (it returns
-`[]` today), so document/RAG retrieval can be implemented later without changing
-the request flow.
+The orchestrator depends only on the `LLMProvider` interface (swap via
+`LLM_PROVIDER`) and on `searchDocuments(query)` (swap keyword search for vector
+search later) — neither requires orchestrator changes.
 
 ---
 
@@ -205,6 +225,7 @@ Required in all cases:
 |---|---|
 | `FIREBASE_PROJECT_ID` | Firebase / GCP project id |
 | `LLM_PROVIDER` | `openai` (default) or `ollama` |
+| `ADMIN_UPLOAD_TOKEN` | Optional. Token gating `/admin/documents` uploads; if unset, the admin upload routes are disabled |
 
 Then provide the **LLM provider** config (see *LLM provider* above):
 
@@ -366,6 +387,56 @@ Edit `WorkingDirectory`/`cwd`, `User`, and `PORT` in those files to match your V
 
 ---
 
+## Document knowledge base (upload + search)
+
+The bot can also answer from uploaded company documents (e.g. an Excel
+*bemanningsplan*), alongside the Firestore project data.
+
+### Uploading documents
+
+1. Set `ADMIN_UPLOAD_TOKEN` to a long random value in `.env.local` (server-side
+   only — never committed, never exposed to the browser).
+2. Open **`/admin/documents`**, enter the token to unlock, then upload files.
+3. Each upload shows name, type, upload date and number of chunks, with a delete
+   button. The token is held only in the browser session (`sessionStorage`).
+
+### Supported file types
+
+**PDF, DOCX, TXT, CSV, XLSX.** Max **10 MB** per file; other types are rejected.
+For XLSX, each sheet is extracted separately, preserving the sheet name, headers
+and row values (good for staffing plans / bemanningsplaner). Only the **extracted
+text/chunks are stored** — the original file is never persisted.
+
+### Storage
+
+```
+knowledge_documents/{documentId}            # metadata: name, fileType, uploadedAt, chunkCount
+knowledge_documents/{documentId}/chunks/... # chunk text + metadata
+```
+
+Text is split into ~800–1200 char chunks with ~150–250 char overlap; each chunk
+stores `documentId`, `documentName`, `fileType`, `sheetName` (XLSX), `chunkIndex`,
+`text` and `uploadedAt`.
+
+### How search works (current limitations)
+
+- Every chat question runs a **keyword / term-frequency search** over stored
+  chunks (`lib/rag/documentSearch.ts`) and the top ~6 chunks are added to the
+  model context. Document names appear in `sources`, and `dataUsed.documents`
+  lists the chunk references used (no raw chunk text is returned to the client).
+- **This MVP uses keyword search, not embeddings.** It does not understand
+  synonyms or meaning, ranks purely on term overlap, and reads all chunks per
+  query (fine for modest volumes, not for very large corpora).
+
+### Upgrading to vector search later
+
+`searchDocuments(query)` is the only contract the orchestrator depends on. To
+upgrade: compute embeddings for each chunk at upload time (store the vector on
+the chunk), then reimplement `searchDocuments` to embed the query and run a
+vector similarity search — no orchestrator or API changes required.
+
+---
+
 ## API
 
 ### `POST /api/chat`
@@ -381,23 +452,28 @@ Response:
 ```json
 {
   "answer": "…",
-  "sources": ["projects", "projects/GSLeXiSkaiAkEqcuFxIx/budget_lines"],
+  "sources": ["projects", "bemanningsplan.xlsx"],
   "dataUsed": {
-    "firestoreCollections": [
-      "projects",
-      "projects/GSLeXiSkaiAkEqcuFxIx/budget_lines"
-    ],
-    "documents": []
+    "firestoreCollections": ["projects"],
+    "documents": [
+      {
+        "documentId": "…",
+        "documentName": "bemanningsplan.xlsx",
+        "fileType": "xlsx",
+        "sheetName": "Bemanning",
+        "chunkIndex": 2
+      }
+    ]
   },
   "warnings": []
 }
 ```
 
 - `answer` — natural-language answer (Norwegian by default)
-- `sources` — all sources the answer draws on (collection paths, plus
-  `"documents"` once RAG is added)
+- `sources` — all sources the answer draws on (Firestore collection paths plus
+  any document names used)
 - `dataUsed.firestoreCollections` — Firestore collection paths read for this answer
-- `dataUsed.documents` — document/RAG matches (always `[]` until RAG is implemented)
+- `dataUsed.documents` — references to document chunks used (no chunk text)
 - `warnings` — non-fatal notices, e.g. truncation ("showing 50 of 320 accounts"),
   an ambiguous/missing project, or large row sets aggregated before sending
 
@@ -448,11 +524,16 @@ Covered:
 - **Data minimization** (`test/normalize.test.ts`) — compacting documents and
   aggregating large row sets.
 - **Orchestrator** (`test/orchestrator.test.ts`) — collection tracking, no
-  subcollection fetch for unknown projects, aggregation, grounding, and a stable
-  response shape (LLM provider mocked).
+  subcollection fetch for unknown projects, aggregation, grounding, document
+  chunks in context + references in `dataUsed`, and a stable response shape.
 - **LLM provider** (`test/llm.test.ts`) — factory selects OpenAI vs Ollama, and
   env validation requires the right keys per provider (no `OPENAI_API_KEY`
   needed for Ollama) without leaking secret values.
+- **Chunking** (`test/chunk.test.ts`) — size/overlap and chunk metadata.
+- **Document extraction** (`test/documentExtract.test.ts`) — TXT/CSV/XLSX
+  extraction and unsupported-type rejection.
+- **Document search** (`test/documentSearch.test.ts`) — relevance ranking,
+  result limit, and stopword-only queries.
 - **API validation** (`test/api-chat.test.ts`) — empty/missing message and bad
   JSON return 400.
 - **No internal leakage** (`test/api-chat.test.ts`) — an internal error (even one
@@ -493,16 +574,19 @@ Covered:
 - **No conversation memory.** Each request is answered independently (no history
   is sent back to the model).
 - **Single LLM call per question.** No tool-calling / multi-step reasoning.
+- **Document search is keyword-based, not embeddings.** See *Document knowledge
+  base* above — no semantic/synonym matching yet, and all chunks are scanned per
+  query (fine for modest volumes).
+- **Admin upload uses a single shared token.** No per-user admin accounts/roles.
 
 ---
 
 ## Planned but NOT implemented yet
 
-- **Document upload + RAG / document search.** `lib/rag/documentSearch.ts` is a
-  placeholder returning `[]`. The orchestrator already invokes it on every
-  request, so adding real document retrieval (embeddings + vector search) later
-  will not require rewriting the pipeline.
+- **Vector search / embeddings** for the document knowledge base (keyword search
+  is implemented today). `searchDocuments(query)` is the only swap point — see
+  *Upgrading to vector search later* above.
 - Conversation history / multi-turn memory.
-- Authentication and per-user authorization.
-- Caching of frequently requested Firestore data.
+- Authentication and per-user authorization (chat endpoint + admin roles).
+- Caching of frequently requested Firestore data and document chunks.
 ```

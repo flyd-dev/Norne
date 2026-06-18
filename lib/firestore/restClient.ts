@@ -113,6 +113,36 @@ function toDoc(raw: RestDocument): FirestoreDoc {
   return { id, ...decodeFields(raw.fields ?? {}) };
 }
 
+// --- Firestore REST value encoding (for writes) ------------------------------
+
+function encodeValue(value: unknown): Record<string, unknown> {
+  if (value === null || value === undefined) return { nullValue: null };
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (typeof value === "number") {
+    return Number.isInteger(value)
+      ? { integerValue: String(value) }
+      : { doubleValue: value };
+  }
+  if (typeof value === "string") return { stringValue: value };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map(encodeValue) } };
+  }
+  if (typeof value === "object") {
+    return { mapValue: { fields: encodeFields(value as Record<string, unknown>) } };
+  }
+  return { stringValue: String(value) };
+}
+
+function encodeFields(
+  data: Record<string, unknown>,
+): Record<string, Record<string, unknown>> {
+  const fields: Record<string, Record<string, unknown>> = {};
+  for (const [key, value] of Object.entries(data)) {
+    fields[key] = encodeValue(value);
+  }
+  return fields;
+}
+
 // --- REST fetch helpers ------------------------------------------------------
 
 async function firestoreGet(path: string): Promise<unknown> {
@@ -148,6 +178,37 @@ async function listDocuments(path: string, limit?: number): Promise<FirestoreDoc
   return typeof limit === "number" ? docs.slice(0, limit) : docs;
 }
 
+async function firestorePatch(
+  path: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const token = await getIdToken();
+  const url = `${firestoreBaseUrl(env.firebase.projectId())}/${path}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: encodeFields(data) }),
+  });
+  if (!res.ok) {
+    throw new Error(`Firestore REST write failed (HTTP ${res.status}).`);
+  }
+}
+
+async function firestoreDelete(path: string): Promise<void> {
+  const token = await getIdToken();
+  const url = `${firestoreBaseUrl(env.firebase.projectId())}/${path}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Firestore REST delete failed (HTTP ${res.status}).`);
+  }
+}
+
 // --- FirestoreClient implementation ------------------------------------------
 
 export function createRestFirestoreClient(): FirestoreClient {
@@ -168,6 +229,28 @@ export function createRestFirestoreClient(): FirestoreClient {
 
     async listSubcollection(parentCollection, parentId, subcollection) {
       return listDocuments(`${parentCollection}/${parentId}/${subcollection}`);
+    },
+
+    async createDocument(collection, id, data) {
+      await firestorePatch(`${collection}/${id}`, data);
+    },
+
+    async createSubDocuments(parentCollection, parentId, subcollection, items) {
+      // REST has no batch write; create sequentially (fine for MVP volumes).
+      for (const item of items) {
+        await firestorePatch(
+          `${parentCollection}/${parentId}/${subcollection}/${item.id}`,
+          item.data,
+        );
+      }
+    },
+
+    async deleteDocumentWithSubcollection(collection, id, subcollection) {
+      const chunks = await listDocuments(`${collection}/${id}/${subcollection}`);
+      for (const chunk of chunks) {
+        await firestoreDelete(`${collection}/${id}/${subcollection}/${chunk.id}`);
+      }
+      await firestoreDelete(`${collection}/${id}`);
     },
   };
 }
