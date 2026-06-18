@@ -144,4 +144,35 @@ describe("monthly capacity — 'frem til september 2026' period wording", () => 
     const r = await runChat(QUESTION, "req", []);
     expect(r.sources).toContain("bemanningsplan.xlsx");
   });
+
+  // Belt-and-braces: even if the model ignores the guardrail and names
+  // out-of-period months (typically scraped from a raw document chunk), the
+  // deterministic scrub must strip them from the FINAL returned answer.
+  it("scrubs out-of-period 'missing months' from the final answer", async () => {
+    cap.reply = [
+      "Tilgjengelig kapasitet per fag frem til september 2026:",
+      "- juli 2026: 100 timer",
+      "- august 2026: 200 timer",
+      "- september 2026: 300 timer",
+      "",
+      "Måneder som mangler kapasitetstall: oktober, november og desember 2026.",
+      "",
+      "Kilde: bemanningsplan.xlsx (Kapasitetsanalyse).",
+    ].join("\n");
+
+    const r = await runChat(QUESTION, "req", []);
+
+    // Out-of-period months are gone entirely.
+    expect(r.answer.toLowerCase()).not.toContain("oktober");
+    expect(r.answer.toLowerCase()).not.toContain("november");
+    expect(r.answer.toLowerCase()).not.toContain("desember");
+    // In-period months survive.
+    expect(r.answer).toContain("juli 2026");
+    expect(r.answer).toContain("august 2026");
+    expect(r.answer).toContain("september 2026");
+    // Source label and filename/sheet are untouched.
+    expect(r.answer).toContain("bemanningsplan.xlsx");
+    expect(r.answer).toContain("Kapasitetsanalyse");
+    expect(r.sources).toContain("bemanningsplan.xlsx");
+  });
 });

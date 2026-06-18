@@ -3,6 +3,7 @@ import {
   parseMonth,
   parseMonthRange,
   filterMonthsByBound,
+  scrubOutOfPeriodMonths,
 } from "@/lib/chat/dateRange";
 
 describe("parseMonth", () => {
@@ -87,5 +88,45 @@ describe("filterMonthsByBound", () => {
       bound,
     );
     expect(out.map((r) => r.month)).toEqual(["august"]);
+  });
+});
+
+describe("scrubOutOfPeriodMonths", () => {
+  const bound = parseMonthRange("frem til september 2026")!;
+
+  it("removes a 'missing months' line naming only out-of-period months", () => {
+    const answer = [
+      "- august 2026: 200 timer",
+      "- september 2026: 300 timer",
+      "Måneder som mangler kapasitetstall: oktober, november og desember 2026.",
+      "Kilde: bemanningsplan.xlsx (Kapasitetsanalyse).",
+    ].join("\n");
+    const out = scrubOutOfPeriodMonths(answer, bound);
+    expect(out).not.toMatch(/oktober|november|desember/i);
+    expect(out).toContain("august 2026");
+    expect(out).toContain("september 2026");
+    expect(out).toContain("bemanningsplan.xlsx");
+    expect(out).toContain("Kapasitetsanalyse");
+  });
+
+  it("keeps in-period months when a sentence mixes in and out of period", () => {
+    const answer =
+      "Vi har tall for august, september og oktober 2026.";
+    const out = scrubOutOfPeriodMonths(answer, bound);
+    expect(out).not.toMatch(/oktober/i);
+    expect(out).toContain("august");
+    expect(out).toContain("september");
+  });
+
+  it("leaves text without out-of-period months untouched", () => {
+    const answer = "Kilde: bemanningsplan.xlsx. Kapasitet i september 2026: 300 timer.";
+    expect(scrubOutOfPeriodMonths(answer, bound)).toBe(answer);
+  });
+
+  it("does not touch filenames or labels that contain no month names", () => {
+    const answer = "Måneder som mangler: oktober 2026.\nKilde: Kapasitetsanalyse.";
+    const out = scrubOutOfPeriodMonths(answer, bound);
+    expect(out).not.toMatch(/oktober/i);
+    expect(out).toContain("Kapasitetsanalyse");
   });
 });

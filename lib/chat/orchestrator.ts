@@ -51,7 +51,11 @@ import {
   extractHistoryFacts,
   metricForResolvedProject,
 } from "@/lib/chat/historyFacts";
-import { parseMonthRange, filterMonthsByBound } from "@/lib/chat/dateRange";
+import {
+  parseMonthRange,
+  filterMonthsByBound,
+  scrubOutOfPeriodMonths,
+} from "@/lib/chat/dateRange";
 import { readMetricField } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
@@ -986,6 +990,23 @@ export async function runChat(
       answer = guard.replacement;
       verifierAction = "contract_value_guard";
       if (guard.reason) fallbackReasons.push(guard.reason);
+    }
+  }
+
+  // Belt-and-braces period scrub: even with the prompt guardrail, raw document
+  // chunks can leak months OUTSIDE the requested range into the model's draft
+  // (e.g. "disse månedene mangler: oktober, november og desember" for a "frem
+  // til september" request). On a monthly view with a parsed range, drop those
+  // out-of-period months from the final answer deterministically — in-period
+  // months, filenames, sheet/source labels and unrelated text are untouched.
+  if (decision.route === "monthly_capacity") {
+    const scrubBound = parseMonthRange(retrievalText);
+    if (scrubBound) {
+      const scrubbed = scrubOutOfPeriodMonths(answer, scrubBound);
+      if (scrubbed !== answer) {
+        answer = scrubbed;
+        fallbackReasons.push("scrubbed_out_of_period_months");
+      }
     }
   }
 
