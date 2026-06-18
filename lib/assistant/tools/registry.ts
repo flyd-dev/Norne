@@ -67,6 +67,12 @@ export interface Tool<I, O> {
  * input source is absent.
  */
 export interface ToolContext {
+  /**
+   * Canonical normalized capacity rows (ISO month). Preferred by the capacity
+   * tools when present — this is the structured-at-ingestion accessor. Falls back
+   * to deriving from `getStructuredTables` / document chunks when absent.
+   */
+  getCapacityRows?: () => Promise<import("@/lib/assistant/domain/capacity").CapacityRow[]>;
   /** Loader for structured staffing tables (deferred so unused tools cost nothing). */
   getStructuredTables?: () => Promise<import("@/lib/documents/types").StoredStructuredTable[]>;
   /** Already-retrieved document chunks for the current question. */

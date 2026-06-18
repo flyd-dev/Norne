@@ -139,6 +139,21 @@ export async function getStructuredTables(): Promise<StoredStructuredTable[]> {
   return all;
 }
 
+/**
+ * Canonical capacity rows across all uploaded documents: the structured
+ * staffing tables normalized to CapacityRow (ISO month, per fag). This is the
+ * "structured at ingestion" accessor — capacity questions read this instead of
+ * re-parsing month wording at query time.
+ */
+export async function getCapacityRows(): Promise<
+  import("@/lib/assistant/domain/capacity").CapacityRow[]
+> {
+  const { capacityRowsFromTables } = await import(
+    "@/lib/assistant/ingestion/capacity"
+  );
+  return capacityRowsFromTables(await getStructuredTables());
+}
+
 /** Load every stored chunk across all documents (for keyword search). */
 export async function getAllChunks(): Promise<StoredChunk[]> {
   const store = await readStore();

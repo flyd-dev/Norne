@@ -58,6 +58,7 @@ import {
   parseISOMonth,
 } from "@/lib/chat/dateRange";
 import { getMonthlyCapacity } from "@/lib/assistant/tools/capacity";
+import { capacityRowsFromTables } from "@/lib/assistant/ingestion/capacity";
 import { getProjectMetric } from "@/lib/assistant/tools/projects";
 import type { MonthlyCapacity } from "@/lib/assistant/domain/capacity";
 import {
@@ -937,7 +938,12 @@ export async function runChat(
     const origin: "structured" | "text" = monthlyDataAvailable ? "structured" : "text";
     const capResult = await getMonthlyCapacity.run(
       { bound },
-      { getStructuredTables: async () => structuredTables, documentMatches: matches },
+      {
+        // Canonical normalized rows from the already-fetched tables (no re-fetch),
+        // with the text chunks as fallback inside the tool.
+        getCapacityRows: async () => capacityRowsFromTables(structuredTables),
+        documentMatches: matches,
+      },
     );
     toolRuns.push({ tool: "getMonthlyCapacity", coverage: capResult.coverage });
     if (capResult.coverage === "full" && capResult.data) {

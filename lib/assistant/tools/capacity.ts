@@ -37,8 +37,13 @@ export interface CapacityScope {
   role?: CanonicalRole | null;
 }
 
-/** Load + normalize CapacityRow[] for the request, structured first. */
+/** Load + normalize CapacityRow[] for the request. Prefers the canonical
+ * pre-normalized accessor, then structured tables, then text chunks. */
 async function loadCapacityRows(ctx: ToolContext): Promise<CapacityRow[]> {
+  if (ctx.getCapacityRows) {
+    const rows = await ctx.getCapacityRows();
+    if (rows.length > 0) return rows;
+  }
   const tables = ctx.getStructuredTables ? await ctx.getStructuredTables() : [];
   const fromTables = capacityRowsFromTables(tables);
   if (fromTables.length > 0) return fromTables;

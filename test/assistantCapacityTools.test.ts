@@ -96,6 +96,20 @@ describe("getMonthlyCapacity — inclusive 'frem til september 2026'", () => {
     expect(r.data).toBeNull();
   });
 
+  it("prefers the canonical getCapacityRows accessor when present", async () => {
+    const ctx: ToolContext = {
+      getCapacityRows: async () => [
+        { month: "2026-09", role: "Welder", availableHours: 99, assignedHours: null, source: DOC, sheet: "Kapasitetsanalyse" },
+      ],
+      // A different structured table that must be IGNORED in favour of the rows.
+      getStructuredTables: async () => ALL_MONTHS.map(monthTable),
+    };
+    const r = await getMonthlyCapacity.run({ bound: UNTIL_SEPT }, ctx);
+    expect(r.coverage).toBe("full");
+    expect(r.data!.months).toHaveLength(1);
+    expect(r.data!.months[0].byRole["Welder"]).toBe(99);
+  });
+
   it("returns coverage partial when data exists but not in range", async () => {
     const before = parseMonthRange("frem til januar 2025")!;
     const r = await getMonthlyCapacity.run({ bound: before }, tablesCtx());
