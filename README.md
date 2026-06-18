@@ -505,6 +505,81 @@ always generic; the `requestId` lets you find the matching server log line.
 
 ---
 
+## Endre API integration (optional, disabled by default)
+
+The app can *optionally* talk to [Endre](https://public-api.endre.app)'s public
+REST API to read live project/economy data. This is an **optional integration
+layer** — it is **not** wired into `/api/chat` answers, and the existing
+Firebase + uploaded-document flow remains the source of truth. With the
+integration off (the default), nothing changes and no Endre credentials are
+required to start the app.
+
+### How it works
+
+- **Auth:** OAuth2 *password* grant. The client posts `username`/`password` (and
+  optional `client_id`/`client_secret`) to `POST /token`, receives a JWT bearer
+  token, caches it until expiry (read from the JWT `exp` claim, with a
+  conservative TTL fallback), and re-authenticates automatically when it
+  expires or a request returns `401`.
+- **Safety:** passwords and tokens are never logged or placed in error messages;
+  every request has a timeout; failures throw typed errors
+  (`EndreConfigError`, `EndreAuthError`, `EndreApiError`, `EndreTimeoutError`).
+- **Read-only helpers** are provided only for endpoints that actually exist in
+  the Endre OpenAPI spec: `listOrganizations`, `getOrganization`,
+  `listProjects`, `getProject`, `getProjectAmounts`, `listProjectCases`,
+  `listProjectContracts`, `getProjectTags`, `listProjectOrganizations`
+  (see [`lib/endre/client.ts`](lib/endre/client.ts)).
+
+> **Note on requested helpers:** the Endre API has **no** chart-of-accounts,
+> budget-line, quantity, or staffing/capacity/timer endpoints. So
+> `listAccounts()`, `getBudgetLines()`, `getQuantities()`, and
+> `getStaffingCapacity()` are intentionally **not** implemented — the nearest
+> real data is project *amounts*, *cases*, *cost-items*, and *contracts*.
+
+### Environment variables
+
+```bash
+ENDRE_API_ENABLED=false                       # master flag; default false
+ENDRE_API_BASE_URL=https://public-api.endre.app
+ENDRE_API_USERNAME=                           # required to use the integration
+ENDRE_API_PASSWORD=                           # required to use the integration
+ENDRE_API_CLIENT_ID=                          # optional (only if Endre issues one)
+ENDRE_API_CLIENT_SECRET=                      # optional
+```
+
+The integration is used **only when `ENDRE_API_ENABLED=true` *and* a username +
+password are present.** Otherwise `getEndreClient()` returns `null` and callers
+fall back to the existing Firebase/document flow.
+
+### Enabling it
+
+1. Put real credentials in `.env.local` (never commit them).
+2. Set `ENDRE_API_ENABLED=true`.
+3. Verify connectivity via the diagnostic endpoint below.
+
+### Diagnostic endpoint
+
+`GET /api/admin/endre/status` — protected by `ADMIN_UPLOAD_TOKEN` (same bearer
+gate as the other admin routes). It returns, without exposing any credentials,
+tokens, or raw payloads:
+
+```json
+{
+  "enabled": true,
+  "configured": true,
+  "canAuthenticate": true,
+  "availableCapabilities": ["organizations", "projects", "project_amounts", "..."],
+  "error": "…only present, and generic, if authentication failed"
+}
+```
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_UPLOAD_TOKEN" \
+  http://localhost:3000/api/admin/endre/status
+```
+
+---
+
 ## Configuring project name fields
 
 Questions about budget lines or quantities need a specific project. The resolver

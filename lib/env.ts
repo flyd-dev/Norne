@@ -61,6 +61,26 @@ export const env = {
       readOptional("DOCUMENT_STORE_PATH") ??
       "/var/lib/norne-chatbot/knowledge-documents.json",
   },
+  feedback: {
+    // Local JSON file holding answer feedback (thumbs up/down + corrections).
+    // Never stores secrets, full chat history, or uploaded document contents.
+    storePath: () =>
+      readOptional("DOCUMENT_FEEDBACK_PATH") ??
+      "/var/lib/norne-chatbot/feedback.json",
+  },
+  endre: {
+    // Optional external integration with the Endre public REST API. DISABLED by
+    // default; the app never requires these at startup. Reads only — never
+    // logged. See lib/endre/client.ts.
+    enabledFlag: () =>
+      (readOptional("ENDRE_API_ENABLED") ?? "false").toLowerCase() === "true",
+    baseUrl: () =>
+      readOptional("ENDRE_API_BASE_URL") ?? "https://public-api.endre.app",
+    username: () => readOptional("ENDRE_API_USERNAME"),
+    password: () => readOptional("ENDRE_API_PASSWORD"),
+    clientId: () => readOptional("ENDRE_API_CLIENT_ID"),
+    clientSecret: () => readOptional("ENDRE_API_CLIENT_SECRET"),
+  },
   firebase: {
     projectId: () => requireVar("FIREBASE_PROJECT_ID"),
 
@@ -78,6 +98,20 @@ export const env = {
     authPassword: () => readOptional("FIREBASE_AUTH_PASSWORD"),
   },
 } as const;
+
+/** True when Endre credentials (username + password) are both present. */
+export function endreConfigured(): boolean {
+  return Boolean(env.endre.username() && env.endre.password());
+}
+
+/**
+ * True when the Endre integration may actually be used: the feature flag is on
+ * AND the required credentials are present. Defaults to false. The app never
+ * fails to start when this is false.
+ */
+export function endreReady(): boolean {
+  return env.endre.enabledFlag() && endreConfigured();
+}
 
 export type FirestoreMode = "admin" | "rest";
 
