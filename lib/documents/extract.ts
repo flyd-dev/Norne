@@ -204,6 +204,50 @@ function structuredFromSheet(
   return { sheetName, columns, rows: structuredRows };
 }
 
+/**
+ * Split one line of extracted text into table cells, or null when it isn't a
+ * row. Recognises tab-, pipe- and run-of-spaces-delimited columns (how tables
+ * survive PDF/DOCX text extraction). Leading/trailing empty cells from a pipe
+ * border ("| a | b |") are dropped.
+ */
+function splitTextRow(line: string): string[] | null {
+  let cells: string[];
+  if (line.includes("\t")) cells = line.split("\t");
+  else if (line.includes("|")) cells = line.split("|");
+  else if (/\S\s{2,}\S/.test(line)) cells = line.split(/\s{2,}/);
+  else return null;
+  cells = cells.map((c) => c.trim());
+  while (cells.length > 0 && cells[0] === "") cells.shift();
+  while (cells.length > 0 && cells[cells.length - 1] === "") cells.pop();
+  return cells.length >= 2 ? cells : null;
+}
+
+/**
+ * Detect staffing/capacity TABLES embedded in extracted PDF/DOCX text. Groups
+ * consecutive delimiter-rows into grids and runs each through structuredFromSheet
+ * — which only accepts staffing-like grids (capacity + role/month columns), so
+ * ordinary prose never produces a spurious table.
+ */
+export function tablesFromText(text: string): StructuredTable[] {
+  const lines = text.split("\n");
+  const tables: StructuredTable[] = [];
+  let block: string[][] = [];
+  const flush = () => {
+    if (block.length >= 2) {
+      const table = structuredFromSheet("dokument", block);
+      if (table) tables.push(table);
+    }
+    block = [];
+  };
+  for (const line of lines) {
+    const cells = splitTextRow(line);
+    if (cells) block.push(cells);
+    else flush();
+  }
+  flush();
+  return tables;
+}
+
 interface XlsxExtraction {
   segments: ExtractedSegment[];
   structured: StructuredTable[];
@@ -279,12 +323,20 @@ export async function extractText(
       structured = x.structured.length > 0 ? x.structured : undefined;
       break;
     }
-    case "pdf":
-      segments = [{ text: await extractPdf(buffer) }];
+    case "pdf": {
+      const text = await extractPdf(buffer);
+      segments = [{ text }];
+      const t = tablesFromText(text);
+      if (t.length > 0) structured = t;
       break;
-    case "docx":
-      segments = [{ text: await extractDocx(buffer) }];
+    }
+    case "docx": {
+      const text = await extractDocx(buffer);
+      segments = [{ text }];
+      const t = tablesFromText(text);
+      if (t.length > 0) structured = t;
       break;
+    }
   }
 
   const total = segments.reduce((n, s) => n + s.text.trim().length, 0);
