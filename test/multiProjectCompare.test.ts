@@ -1,5 +1,5 @@
 /**
- * Multi-project comparison (#2 / #15): "Sammenlign prosjekt 7100 og 3025" must
+ * Multi-project comparison (#2 / #15): "Sammenlign prosjekt 7100 og 3025. Hva vet du sikkert om begge, og hva mangler du data på?" must
  * gather EACH project on its own source (7100 from Firestore, 3025 from Endre)
  * and hand the model one block per project — never confusing the two nor
  * conflating Endre beløpsposter with local metrics.
@@ -78,7 +78,7 @@ beforeEach(() => {
 
 describe("multi-project comparison", () => {
   it("gathers both projects, each from its own source", async () => {
-    const r = await runChat("Sammenlign prosjekt 7100 og 3025", "req", []);
+    const r = await runChat("Sammenlign prosjekt 7100 og 3025. Hva vet du sikkert om begge, og hva mangler du data på?", "req", []);
     const userPrompt = cap.inputs.at(-1)!.userPrompt;
     // Both projects present, not confused.
     expect(userPrompt).toContain("7100");
@@ -93,7 +93,7 @@ describe("multi-project comparison", () => {
   });
 
   it("instructs the model not to conflate Endre totals with local metrics", async () => {
-    await runChat("Sammenlign prosjekt 7100 og 3025", "req", []);
+    await runChat("Sammenlign prosjekt 7100 og 3025. Hva vet du sikkert om begge, og hva mangler du data på?", "req", []);
     const userPrompt = cap.inputs.at(-1)!.userPrompt;
     expect(userPrompt).toMatch(/Sammenlign KUN felter som finnes i samme prosjekt/i);
     expect(userPrompt).toMatch(/kall dem aldri «kontraktsverdi»/i);

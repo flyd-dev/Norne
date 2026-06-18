@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractProjectNameFromText,
   extractProjectNumberFromText,
+  extractProjectNumbersFromText,
   resolveEntity,
 } from "@/lib/chat/entityResolver";
 import type { ProjectLike } from "@/lib/chat/projectResolver";
@@ -78,5 +79,30 @@ describe("resolveEntity", () => {
     expect(e.projectNumber).toBeNull();
     expect(e.projectName).toBeNull();
     expect(e.confidence).toBe("low");
+  });
+});
+
+describe("extractProjectNumbersFromText", () => {
+  it("extracts BOTH numbers even when one is followed by a sentence period", () => {
+    // The live failure: a trailing "." after 3025 dropped it, so compare only
+    // saw one project.
+    expect(
+      extractProjectNumbersFromText(
+        "Sammenlign prosjekt 7100 og 3025. Hva vet du sikkert om begge?",
+      ),
+    ).toEqual(["7100", "3025"]);
+  });
+
+  it("handles numbers without trailing punctuation", () => {
+    expect(extractProjectNumbersFromText("Sammenlign 7100 og 3025")).toEqual(["7100", "3025"]);
+  });
+
+  it("drops 4-digit years and ignores decimals/grouped numbers", () => {
+    expect(extractProjectNumbersFromText("frem til september 2026")).toEqual([]);
+    expect(extractProjectNumbersFromText("29.000 timer")).toEqual([]);
+  });
+
+  it("de-duplicates and preserves order", () => {
+    expect(extractProjectNumbersFromText("7100, 3025 og 7100 igjen")).toEqual(["7100", "3025"]);
   });
 });

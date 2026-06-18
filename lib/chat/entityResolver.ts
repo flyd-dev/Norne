@@ -78,7 +78,10 @@ export function extractProjectNumberFromText(text: string): string | null {
 export function extractProjectNumbersFromText(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const re = /(?<![\d.,%])\b(\d{3,6})\b(?![\d.,%])/g;
+  // Reject digits that are part of a larger number (a separator+digit on either
+  // side, e.g. the "000" in "29.000"), but ALLOW trailing sentence punctuation —
+  // "3025." must still match, which the old (?![\d.,%]) lookahead wrongly blocked.
+  const re = /(?<![\d.,])\b(\d{3,6})\b(?!\d)(?![.,]\d)/g;
   for (const m of text.matchAll(re)) {
     const tok = m[1];
     if (YEAR_RE.test(tok) || seen.has(tok)) continue;
