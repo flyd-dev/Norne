@@ -38,12 +38,21 @@ import type { DocumentReference } from "@/lib/documents/types";
 import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
-import { logChatResolved, logEndreDiagnostics } from "@/lib/logger";
+import { logChatResolved, logEndreDiagnostics, logChatPlan } from "@/lib/logger";
 import { endreReady } from "@/lib/env";
 import {
   resolveFollowUp,
   type ChatHistoryMessage,
 } from "@/lib/chat/followup";
+import { planQuestion } from "@/lib/chat/questionPlanner";
+import { resolveEntity } from "@/lib/chat/entityResolver";
+import { extractHistoryFacts } from "@/lib/chat/historyFacts";
+import { readMetricField } from "@/lib/chat/metricResolver";
+import {
+  buildProjectMetricAnswer,
+  type MetricValueSource,
+} from "@/lib/chat/projectMetricAnswer";
+import { verifyAnswer } from "@/lib/chat/answerVerifier";
 import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
 import {
   analyzeCapacity,
@@ -78,6 +87,20 @@ export interface ChatDataUsed {
   documents: DocumentReference[];
 }
 
+/** Safe, payload-free diagnostics about how the answer was produced. */
+export interface ChatDiagnostics {
+  intent: string;
+  resolvedProjectNumber: string | null;
+  resolvedProjectName: string | null;
+  resolvedMetric: string | null;
+  confidence: string;
+  selectedSources: string[];
+  checkedSources: string[];
+  answerFound: boolean;
+  deterministicAnswerUsed: boolean;
+  fallbackReasons: string[];
+}
+
 export interface ChatResult {
   answer: string;
   /** All sources the answer draws on (collection paths + "documents"). */
@@ -87,6 +110,8 @@ export interface ChatResult {
   warnings: string[];
   /** The route the question was classified into (for feedback + debugging). */
   route?: Route;
+  /** Safe diagnostics about planning/resolution/source selection. */
+  diagnostics?: ChatDiagnostics;
 }
 
 type ContextBlock = Record<string, unknown>;
@@ -107,6 +132,25 @@ export async function runChat(
   // Turn the intent into an explicit route with a fixed source/search/format
   // policy. The orchestrator obeys this instead of re-deriving rules inline.
   const decision = routeMessage(retrievalText, intent, followUp.isFollowUp);
+
+  // Reasoning/planning layer: resolve the entity (project) and metric the user
+  // really means, decide which sources are relevant, and whether history is
+  // needed — BEFORE any retrieval. The orchestrator then obeys the plan.
+  const plan = planQuestion({
+    message,
+    retrievalText,
+    intent,
+    decision,
+    history,
+    isFollowUp: followUp.isFollowUp,
+  });
+  const historyFacts = extractHistoryFacts(history);
+  const endreHint = {
+    projectNumber: plan.entities.projectNumber ?? null,
+    projectName: plan.entities.projectName ?? null,
+  };
+  const fallbackReasons: string[] = [];
+  let deterministicAnswerUsed = false;
 
   // Only include internal document ids in the model context when the user
   // explicitly asks for an id; otherwise they are kept out of the answer entirely
@@ -183,7 +227,12 @@ export async function runChat(
       fallbackReason: null,
     };
     if (endreClient) {
-      const endre = await buildEndreProjectContext(message, endreClient, diag);
+      const endre = await buildEndreProjectContext(
+        message,
+        endreClient,
+        diag,
+        endreHint,
+      );
       if (endre) {
         Object.assign(context, endre.context);
         endreSources.push(...endre.sources);
@@ -212,6 +261,7 @@ export async function runChat(
       endreSources: [...endreSources],
       fallbackReason: diag.fallbackReason,
     });
+    if (diag.fallbackReason) fallbackReasons.push(diag.fallbackReason);
   }
 
   // We need the projects list to answer project questions OR to resolve a
@@ -281,6 +331,108 @@ export async function runChat(
         }
       }
     }
+  }
+
+  // --- Authoritative entity resolution + known metric value -----------------
+  // Resolve the project against the data we now hold (Endre context, Firestore
+  // list and history), then look for the requested metric's value. Prefer a
+  // structured source (Endre/Firestore field); fall back to a value already
+  // established in the conversation. This drives both the deterministic answer
+  // path below and the answer verifier further down.
+  const resolvedEntity = resolveEntity({ message, history, projects });
+  let knownValue: number | string | null = null;
+  let valueSource: MetricValueSource | null = null;
+  // Only single-value project questions use the known-value / deterministic path.
+  // Capacity, account and row-aggregate (budget/quantities) routes are untouched.
+  const isMetricLookup =
+    Boolean(plan.metric) &&
+    plan.intent === "project_metric" &&
+    decision.route === "project_summary";
+  if (plan.metric && isMetricLookup) {
+    const doc = resolvedEntity.projectId
+      ? projects.find((p) => p.id === resolvedEntity.projectId)
+      : undefined;
+    if (doc) {
+      const v = readMetricField(doc, plan.metric);
+      if (v !== null) {
+        knownValue = v;
+        valueSource = "structured";
+      }
+    }
+    if (knownValue === null && context.endre_project) {
+      const v = readMetricField(
+        context.endre_project as Record<string, unknown>,
+        plan.metric,
+      );
+      if (v !== null) {
+        knownValue = v;
+        valueSource = "structured";
+      }
+    }
+    if (knownValue === null && historyFacts.metrics[plan.metric] !== undefined) {
+      knownValue = historyFacts.metrics[plan.metric]!;
+      valueSource = "history";
+    }
+  }
+
+  // --- Deterministic project-metric answer ----------------------------------
+  // A direct, single-value project question ("Hva er kontraktsverdien på
+  // Pilestredet?") with a resolved project + metric + value is answered here,
+  // WITHOUT relying on the LLM to re-infer a value it may have shown a turn ago.
+  // Row-aggregate routes (budget_lines/quantities) keep their normal path.
+  const hasResolvedProject = Boolean(
+    resolvedEntity.projectNumber || resolvedEntity.projectName,
+  );
+  if (
+    plan.metric &&
+    isMetricLookup &&
+    hasResolvedProject &&
+    knownValue !== null &&
+    valueSource !== null
+  ) {
+    const answer = buildProjectMetricAnswer({
+      metric: plan.metric,
+      value: knownValue,
+      projectName: resolvedEntity.projectName,
+      projectNumber: resolvedEntity.projectNumber,
+      question: message,
+    });
+    deterministicAnswerUsed = true;
+    const sources = [...firestoreCollections, ...endreSources];
+    if (valueSource === "history") sources.push("Samtalehistorikk");
+
+    logChatPlan(requestId, {
+      intent: plan.intent,
+      resolvedProjectNumber: resolvedEntity.projectNumber,
+      resolvedProjectName: resolvedEntity.projectName,
+      resolvedMetric: plan.metric,
+      confidence: plan.confidence,
+      selectedSources: sources,
+      checkedSources: [...firestoreCollections, ...endreSources],
+      answerFound: true,
+      deterministicAnswerUsed: true,
+      fallbackReasons,
+    });
+
+    return {
+      answer,
+      sources,
+      dataUsed: { firestoreCollections, documents: [] },
+      warnings,
+      route: decision.route,
+      diagnostics: {
+        intent: plan.intent,
+        resolvedProjectNumber: resolvedEntity.projectNumber,
+        resolvedProjectName: resolvedEntity.projectName,
+        resolvedMetric: plan.metric,
+        confidence: plan.confidence,
+        selectedSources: sources,
+        checkedSources: [...firestoreCollections, ...endreSources],
+        answerFound: true,
+        deterministicAnswerUsed: true,
+        fallbackReasons,
+      },
+    };
   }
 
   // --- Document / RAG search -----------------------------------------------
@@ -401,6 +553,27 @@ export async function runChat(
     );
   }
 
+  // Surface what the conversation already established (resolved project + any
+  // known value) so the model uses it instead of refusing — but it should still
+  // verify against the structured data in the context when present.
+  if (resolvedEntity.projectName || resolvedEntity.projectNumber) {
+    const ref =
+      resolvedEntity.projectName && resolvedEntity.projectNumber
+        ? `${resolvedEntity.projectName} (prosjekt ${resolvedEntity.projectNumber})`
+        : resolvedEntity.projectName ?? `prosjekt ${resolvedEntity.projectNumber}`;
+    notes.push(
+      `Spørsmålet gjelder ${ref}. Bruk dette til å finne riktig data og svar — ` +
+        `ikke be brukeren oppgi prosjektet på nytt.`,
+    );
+  }
+  if (plan.metric && knownValue !== null) {
+    notes.push(
+      `Verdien for «${plan.metric}» er allerede kjent fra ` +
+        `${valueSource === "history" ? "samtalen" : "strukturerte data"}: ` +
+        `${knownValue}. Svar med denne verdien — ikke si at informasjonen mangler.`,
+    );
+  }
+
   // Append the route's answer-format guardrail so the answer is shaped correctly
   // (concrete account, capacity conclusion, project-only summary, …).
   notes.push(decision.answerFormat);
@@ -424,11 +597,47 @@ export async function runChat(
     context,
   });
 
-  const answer = raw.trim() || "Jeg har ikke nok informasjon til å svare på det.";
+  let answer = raw.trim() || "Jeg har ikke nok informasjon til å svare på det.";
+
+  // Verify the drafted answer: if we know the requested metric value but the
+  // model omitted it or claimed missing information, substitute the correct,
+  // deterministic answer. (Belt-and-braces on top of the deterministic path.)
+  if (knownValue !== null && valueSource !== null) {
+    const verdict = verifyAnswer({
+      plan,
+      question: message,
+      answer,
+      known: {
+        value: knownValue,
+        source: valueSource,
+        projectName: resolvedEntity.projectName,
+        projectNumber: resolvedEntity.projectNumber,
+      },
+    });
+    if (!verdict.ok && verdict.replacement) {
+      answer = verdict.replacement;
+      deterministicAnswerUsed = true;
+      if (verdict.reason) fallbackReasons.push(verdict.reason);
+    }
+  }
 
   // Sources: Firestore collection paths, document names, and any Endre
   // capabilities used — each clearly marked so the answer cites its origin.
   const sources = [...firestoreCollections, ...documentNames, ...endreSources];
+
+  const diagnostics: ChatDiagnostics = {
+    intent: plan.intent,
+    resolvedProjectNumber: resolvedEntity.projectNumber,
+    resolvedProjectName: resolvedEntity.projectName,
+    resolvedMetric: plan.metric ?? null,
+    confidence: plan.confidence,
+    selectedSources: sources,
+    checkedSources: [...firestoreCollections, ...documentNames, ...endreSources],
+    answerFound: knownValue !== null || sources.length > 0,
+    deterministicAnswerUsed,
+    fallbackReasons,
+  };
+  logChatPlan(requestId, diagnostics);
 
   return {
     answer,
@@ -436,5 +645,6 @@ export async function runChat(
     dataUsed: { firestoreCollections, documents },
     warnings,
     route: decision.route,
+    diagnostics,
   };
 }

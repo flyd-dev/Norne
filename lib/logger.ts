@@ -68,6 +68,33 @@ export function logEndreDiagnostics(
   emit("log", { evt: "endre_diagnostics", requestId, ...info });
 }
 
+/**
+ * Safe diagnostics for the question planner + answer path.
+ *
+ * Logs ONLY the coded plan (intent label, resolved project number/name token,
+ * resolved metric code, source labels, booleans and coded fallback reasons).
+ * NEVER logs raw API payloads, document contents, credentials, tokens, or the
+ * full chat history. Project number/name and metric code are short identifiers,
+ * not free-text message content.
+ */
+export function logChatPlan(
+  requestId: string,
+  info: {
+    intent: string;
+    resolvedProjectNumber: string | null;
+    resolvedProjectName: string | null;
+    resolvedMetric: string | null;
+    confidence: string;
+    selectedSources: string[];
+    checkedSources: string[];
+    answerFound: boolean;
+    deterministicAnswerUsed: boolean;
+    fallbackReasons: string[];
+  },
+): void {
+  emit("log", { evt: "chat_plan", requestId, ...info });
+}
+
 /** Derive a safe error type name from an unknown thrown value. */
 export function errorTypeOf(error: unknown): string {
   if (error instanceof Error) return error.name || "Error";

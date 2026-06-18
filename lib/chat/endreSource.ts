@@ -304,12 +304,30 @@ async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
 }
 
 /**
- * True when the message points at one specific project (a project number or an
- * explicit document id). Used to decide whether a missing project should fall
- * back to Firebase (specific lookup) rather than answer with the project list.
+ * A project the caller has already resolved (from the message, a project list or
+ * history). Lets the Endre source recognise a specific-project question even when
+ * the project is named rather than numbered, and try the resolved number as an
+ * extra match token. Optional so existing callers keep working.
  */
-function referencesSpecificProject(message: string): boolean {
-  return /\b\d{3,6}\b/.test(message) || /\b[A-Za-z0-9]{20}\b/.test(message);
+export interface ResolvedProjectHint {
+  projectNumber?: string | null;
+  projectName?: string | null;
+}
+
+/**
+ * True when the question points at one specific project — a project number or
+ * explicit document id in the message, OR a project the caller already resolved
+ * by name/number. Used to decide whether a missing project should fall back to
+ * Firebase (specific lookup) rather than answer with the whole project list.
+ */
+function referencesSpecificProject(
+  message: string,
+  hint?: ResolvedProjectHint,
+): boolean {
+  if (/\b\d{3,6}\b/.test(message) || /\b[A-Za-z0-9]{20}\b/.test(message)) {
+    return true;
+  }
+  return Boolean(hint?.projectName || hint?.projectNumber);
 }
 
 /**
@@ -399,9 +417,10 @@ export async function buildEndreProjectContext(
   message: string,
   client: EndreClient,
   diag?: EndreDiagnostics,
+  hint?: ResolvedProjectHint,
 ): Promise<EndreProjectResult | null> {
   if (diag) {
-    diag.projectQuery = extractProjectQuery(message);
+    diag.projectQuery = extractProjectQuery(message) ?? hint?.projectNumber ?? null;
     diag.attemptedEndre = true;
   }
 
@@ -433,8 +452,10 @@ export async function buildEndreProjectContext(
 
   // Field-name-agnostic fallback: match the project-number token against any
   // scalar field, so a number under a non-standard field name still resolves.
-  const token = extractProjectQuery(message);
-  if (token) {
+  // Try the message's own token first, then any number the caller resolved
+  // (e.g. a number recovered from history for a name-only follow-up).
+  for (const token of [extractProjectQuery(message), hint?.projectNumber]) {
+    if (!token) continue;
     const direct = matchByNumberToken(projects, token);
     if (direct) {
       if (diag) diag.endreFound = true;
@@ -442,9 +463,11 @@ export async function buildEndreProjectContext(
     }
   }
 
-  // A specific project was named but Endre doesn't have it → fall back so
-  // Firebase still gets a chance to answer.
-  if (referencesSpecificProject(message)) {
+  // A specific project was named/numbered but Endre doesn't have it → fall back
+  // so Firebase still gets a chance to answer. This now also covers a project
+  // referenced purely by NAME (e.g. "kontraktsverdi på Pilestredet prosjektet"),
+  // which previously slipped through and wrongly returned the whole Endre list.
+  if (referencesSpecificProject(message, hint)) {
     if (diag) diag.fallbackReason = "project_not_found_in_endre";
     return null;
   }
