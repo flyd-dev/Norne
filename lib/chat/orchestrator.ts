@@ -58,8 +58,8 @@ import {
   parseISOMonth,
 } from "@/lib/chat/dateRange";
 import { getMonthlyCapacity } from "@/lib/assistant/tools/capacity";
+import { getProjectMetric } from "@/lib/assistant/tools/projects";
 import type { MonthlyCapacity } from "@/lib/assistant/domain/capacity";
-import { readMetricField } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
   type MetricValueSource,
@@ -594,24 +594,30 @@ export async function runChat(
     plan.intent === "project_metric" &&
     decision.route === "project_summary";
   if (plan.metric && isMetricLookup) {
+    // Read the value through the getProjectMetric TOOL (Firestore doc first,
+    // then the live Endre record). The tool encodes the contract-value honesty
+    // rule; here it returns the value when the record genuinely has the field.
+    const ref = {
+      projectNumber: resolvedEntity.projectNumber,
+      projectName: resolvedEntity.projectName,
+    };
     const doc = resolvedEntity.projectId
       ? projects.find((p) => p.id === resolvedEntity.projectId)
       : undefined;
-    if (doc) {
-      const v = readMetricField(doc, plan.metric);
-      if (v !== null) {
-        knownValue = v;
-        valueSource = "structured";
-      }
-    }
-    if (knownValue === null && context.endre_project) {
-      const v = readMetricField(
-        context.endre_project as Record<string, unknown>,
-        plan.metric,
+    const candidates: (Record<string, unknown> | undefined)[] = [
+      doc,
+      context.endre_project as Record<string, unknown> | undefined,
+    ];
+    for (const record of candidates) {
+      if (!record) continue;
+      const res = await getProjectMetric.run(
+        { metric: plan.metric },
+        { projectRecord: record, projectRef: ref },
       );
-      if (v !== null) {
-        knownValue = v;
+      if (res.coverage === "full" && res.data && res.data.value !== null) {
+        knownValue = res.data.value;
         valueSource = "structured";
+        break;
       }
     }
     // History fallback: ONLY a value that history established for THIS resolved
