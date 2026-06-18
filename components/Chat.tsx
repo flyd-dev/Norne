@@ -226,13 +226,6 @@ export default function Chat() {
       <div className="shell">
         <header className="header">
           <div className="brand">
-            <img
-              className="logo"
-              src="/brand/norne-symbol-light.png"
-              alt="Nornebygg"
-              width={42}
-              height={24}
-            />
             <div>
               <h1>Norne Assistent</h1>
               <p>Spør om prosjekter, dokumenter, budsjettlinjer og mengder.</p>
@@ -249,11 +242,19 @@ export default function Chat() {
           </button>
         </header>
 
+        <div className="divider-band" aria-hidden="true">
+          <div className="logo-divider">
+            <span className="ld-line" />
+            <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
+            <span className="ld-line" />
+          </div>
+        </div>
+
         <div className="messages" ref={listRef} aria-live="polite">
           {isEmpty && (
             <div className="empty">
               <h2>Norne Assistent</h2>
-              <p>Still et spørsmål for å komme i gang, eller velg et eksempel:</p>
+              <p>Still et spørsmål om prosjekter, dokumenter eller mengder.</p>
               <div className="chips">
                 {EXAMPLES.map((q) => (
                   <button

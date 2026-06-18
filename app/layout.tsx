@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description:
     "Intern prosjektassistent — spør om prosjekter, budsjettlinjer og mengder.",
   icons: {
-    icon: "/brand/norne-symbol-dark.png",
+    icon: "/norne-logo-gold.png",
   },
 };
 

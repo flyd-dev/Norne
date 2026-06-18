@@ -1,14 +1,14 @@
 :root {
-  /* ---------- Nornebygg-inspired palette ----------
+  /* ---------- Nornebygg palette ----------
      Robust. Presis. Tilstede. Industrial concrete + raw structure.
-     HEX values inferred from the Nornebygg brand expression. */
-  --accent: #f2541b; /* primary orange — actions */
-  --accent-deep: #c73e10; /* hover/pressed orange */
-  --accent-soft: rgba(242, 84, 27, 0.1); /* faint orange wash */
+     Gold accent #CD9D3A from the Nornebygg brand sample. */
+  --accent: #cd9d3a; /* Nornebygg gold — actions/accents */
+  --accent-deep: #a87d2b; /* gold hover/pressed */
+  --accent-soft: rgba(205, 157, 58, 0.14); /* faint gold wash */
 
-  --ink: #161616; /* primary dark — headers, strong text */
-  --ink-2: #2b2b2b; /* concrete dark — body strong */
-  --ink-soft: #3a352e; /* softened dark text */
+  --ink: #161616; /* primary dark — headers */
+  --ink-2: #1b1b1b; /* main text */
+  --ink-soft: #2b2b2b; /* secondary dark / concrete */
   --muted: #6f6a61; /* medium concrete gray — secondary text */
 
   --bg: #ece7dd; /* page: warm concrete, slightly deeper than card */
@@ -22,8 +22,8 @@
   --header-bg: #161616; /* dark industrial header */
   --header-ink: #f3efe8; /* light text on dark header */
 
-  --user-bubble: #fbe9df; /* light warm orange tint */
-  --user-border: #f0c4ac;
+  --user-bubble: #f6efdd; /* subtle warm gold/concrete tint */
+  --user-border: #e3d3a5;
 
   --assistant-bubble: #fffcf7; /* off-white concrete card */
   --assistant-border: #d8d0c3;
@@ -177,6 +177,43 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- Logo divider (gold rune + rules) ---------- */
+.divider-band {
+  background: var(--paper);
+  padding: 18px 20px 6px;
+  display: flex;
+  justify-content: center;
+}
+
+.logo-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.logo-divider .ld-line {
+  flex: 1;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.logo-divider .ld-mark {
+  flex: none;
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
+/* Inside the white admin card, the band blends with the card surface */
+.admin-card .divider-band {
+  background: transparent;
+  padding-top: 16px;
+  padding-bottom: 4px;
+}
+
 /* ---------- Messages ---------- */
 .messages {
   flex: 1;
@@ -214,7 +251,7 @@ body {
   max-width: 740px;
   background: var(--assistant-bubble);
   border: 1px solid var(--assistant-border);
-  border-left: 3px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
   box-shadow: var(--shadow-sm);
 }
 
@@ -234,7 +271,7 @@ body {
 }
 
 .row.assistant .role {
-  color: var(--accent-deep);
+  color: var(--muted);
 }
 
 /* Rich answer rendering */
@@ -529,7 +566,7 @@ body {
 .send-btn {
   flex: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--ink); /* dark ink on gold — ~6.7:1 contrast */
   border: none;
   border-radius: var(--radius-sm);
   padding: 11px 22px;
@@ -777,5 +814,15 @@ body {
   }
   .send-btn {
     padding: 11px 16px;
+  }
+  .divider-band {
+    padding: 14px 14px 4px;
+  }
+  .logo-divider {
+    max-width: 260px;
+    gap: 12px;
+  }
+  .logo-divider .ld-mark {
+    height: 20px;
   }
 }

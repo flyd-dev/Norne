@@ -145,9 +145,9 @@ export default function AdminDocuments() {
         <div className="admin-card admin-gate">
           <img
             className="gate-logo"
-            src="/brand/norne-symbol-dark.png"
+            src="/norne-logo-gold.png"
             alt="Nornebygg"
-            width={84}
+            width={86}
             height={48}
           />
           <h1>Dokumentadministrasjon</h1>
@@ -176,13 +176,6 @@ export default function AdminDocuments() {
       <div className="admin-card">
         <header className="admin-header">
           <div className="brand">
-            <img
-              className="logo"
-              src="/brand/norne-symbol-light.png"
-              alt="Nornebygg"
-              width={42}
-              height={24}
-            />
             <div>
               <h1>Dokumentadministrasjon</h1>
               <p>Last opp PDF, DOCX, TXT, CSV eller XLSX. Maks 10 MB per fil.</p>
@@ -192,6 +185,14 @@ export default function AdminDocuments() {
             Lås
           </button>
         </header>
+
+        <div className="divider-band" aria-hidden="true">
+          <div className="logo-divider">
+            <span className="ld-line" />
+            <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
+            <span className="ld-line" />
+          </div>
+        </div>
 
         <form onSubmit={upload} className="upload-form">
           <input ref={fileRef} type="file" accept={ACCEPT} aria-label="Velg fil" />
