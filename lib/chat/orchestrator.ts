@@ -68,7 +68,7 @@ import {
 import {
   verifyAnswer,
   pruneSources,
-  guardContractValue,
+  guardUnverifiedMetric,
   guardUnsupportedCapacity,
 } from "@/lib/chat/answerVerifier";
 import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
@@ -511,7 +511,14 @@ export async function runChat(
         notes.push(
           "Prosjektdataene i feltene «endre_project»/«endre_projects» kommer fra " +
             "Endre (live prosjektsystem) og er den foretrukne kilden for dette " +
-            "spørsmålet. Svar ut fra disse. Ikke gjengi rå felter eller id-er.",
+            "spørsmålet. Svar ut fra disse. Ikke gjengi rå felter eller id-er. " +
+            "VIKTIG: Endre har bare generelle beløpsposter (f.eks. amounts/contracts " +
+            "med TotalAmount, accepted, rejected, pending). Disse er IKKE det samme " +
+            "som «kontraktsverdi», «forventet resultat», «resultat», «forventet " +
+            "inntekt» eller andre navngitte nøkkeltall — kall dem aldri det. Hvis " +
+            "brukeren spør om et slikt navngitt tall og Endre ikke har et eget felt " +
+            "for det, si tydelig at feltet mangler i Endre og vis heller beløps" +
+            "postene. Ikke bland Endre-beløp med lokale prosjektfelter som betyr noe annet.",
         );
       }
     } else {
@@ -1090,17 +1097,13 @@ export async function runChat(
     }
   }
 
-  // Contract-value guard: when the user asked for the kontraktsverdi, no verified
-  // contract-value field was found, and the only numbers we have are generic
-  // Endre amount totals, the model must not pass one of those off as the contract
-  // value. Replace such an answer with an honest "no dedicated field" response.
-  if (
-    plan.metric === "contract_value" &&
-    isMetricLookup &&
-    knownValue === null &&
-    hasResolvedProject
-  ) {
-    const guard = guardContractValue({
+  // Named-money-metric guard: when the user asked for a named money metric
+  // (kontraktsverdi, forventet resultat, resultat, …), no real field was found,
+  // and the only numbers we have are generic Endre amount totals, the model must
+  // not pass one of those off as that metric. Replace with an honest "no
+  // dedicated field — here are the amount posts" response.
+  if (plan.metric && isMetricLookup && knownValue === null && hasResolvedProject) {
+    const guard = guardUnverifiedMetric({
       metric: plan.metric,
       answer,
       projectName: resolvedEntity.projectName,
@@ -1110,7 +1113,7 @@ export async function runChat(
     });
     if (guard.triggered && guard.replacement) {
       answer = guard.replacement;
-      verifierAction = "contract_value_guard";
+      verifierAction = "metric_value_guard";
       if (guard.reason) fallbackReasons.push(guard.reason);
     }
   }

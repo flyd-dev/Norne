@@ -15,7 +15,7 @@
 
 import type { QuestionPlan } from "@/lib/chat/questionPlanner";
 import type { SourceKind } from "@/lib/chat/router";
-import type { Metric } from "@/lib/chat/metricResolver";
+import { metricDef, type Metric } from "@/lib/chat/metricResolver";
 import {
   buildProjectMetricAnswer,
   formatNumberNo,
@@ -102,50 +102,71 @@ export function presentsMoneyFigure(answer: string): boolean {
   return MONEY_WITH_UNIT_RE.test(answer) || GROUPED_NUMBER_RE.test(answer);
 }
 
-export interface ContractGuardInput {
+export interface MetricGuardInput {
   metric?: Metric;
   answer: string;
   projectName: string | null;
   projectNumber: string | null;
-  /** True when a true contract-value field was found (deterministic path). */
+  /** True when a real field for the metric was found (deterministic path). */
   hasVerifiedValue: boolean;
   /**
    * True when the ONLY numeric project data came from generic Endre amount
-   * totals (project_amounts/cases/contracts) — i.e. no dedicated contract-value
-   * field and no document content to draw a real contract value from.
+   * totals (project_amounts/cases/contracts) — i.e. no dedicated field for the
+   * requested metric and no document content to draw a real value from.
    */
   onlyGenericEndreTotals: boolean;
 }
 
-export interface ContractGuardResult {
+export interface MetricGuardResult {
   triggered: boolean;
   replacement?: string;
   reason?: string;
 }
 
 /**
- * Stop a "kontraktsverdi" answer from passing off a generic Endre amount total
- * as the contract value. When the requested metric is the contract value, no
- * verified contract field was found, the only numbers available are generic
- * Endre totals, and the drafted answer nonetheless states a money figure, we
- * replace it with an honest "no dedicated contract-value field" answer.
+ * Named money metrics that Endre's generic amount totals must NEVER be passed off
+ * as. Endre only exposes TotalAmount/accepted/rejected/pending — calling one of
+ * those "kontraktsverdi", "forventet resultat", "resultat", etc. is the exact
+ * mislabeling observed in production, so these are guarded.
  */
-export function guardContractValue(input: ContractGuardInput): ContractGuardResult {
-  if (input.metric !== "contract_value") return { triggered: false };
+const GUARDED_MONEY_METRICS: Metric[] = [
+  "contract_value",
+  "expected_result",
+  "result",
+  "expected_income",
+  "invoiced_amount",
+  "total_costs",
+  "material_costs",
+  "other_costs",
+  "backlog",
+];
+
+/**
+ * Stop an answer from passing off a generic Endre amount total as a named money
+ * metric (kontraktsverdi, forventet resultat, …). When the requested metric is
+ * one of those, no real field was found, the only numbers available are generic
+ * Endre totals, and the draft nonetheless states a money figure, we replace it
+ * with an honest "no dedicated field — here are the amount posts" answer.
+ */
+export function guardUnverifiedMetric(input: MetricGuardInput): MetricGuardResult {
+  if (!input.metric || !GUARDED_MONEY_METRICS.includes(input.metric)) {
+    return { triggered: false };
+  }
   if (input.hasVerifiedValue) return { triggered: false };
   if (!input.onlyGenericEndreTotals) return { triggered: false };
   if (!presentsMoneyFigure(input.answer)) return { triggered: false };
 
+  const label = metricDef(input.metric).labels[0];
   const ref =
     input.projectName && input.projectNumber
       ? `${input.projectName} (prosjekt ${input.projectNumber})`
       : input.projectName ?? `prosjekt ${input.projectNumber ?? ""}`.trim();
   return {
     triggered: true,
-    reason: "contract_value_unverified",
+    reason: `${input.metric}_unverified`,
     replacement:
       `Jeg finner ${ref} i Endre, men jeg finner ikke et eget felt for ` +
-      `kontraktsverdi i tilgjengelige data. Jeg finner derimot beløpsposter ` +
+      `${label} i tilgjengelige data. Jeg finner derimot beløpsposter ` +
       `(under «amounts»/«contracts»). Vil du at jeg viser dem i stedet?`,
   };
 }
