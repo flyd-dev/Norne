@@ -16,7 +16,7 @@ import {
   findRoleMatches,
   type CanonicalRole,
 } from "@/lib/chat/roles";
-import { parseMonth } from "@/lib/chat/dateRange";
+import { parseMonth, parseAnyMonth } from "@/lib/chat/dateRange";
 import type { StoredStructuredTable } from "@/lib/documents/types";
 import type { DocumentMatch } from "@/lib/rag/documentSearch";
 
@@ -205,4 +205,49 @@ export function readMonthlyAvailabilityFromText(
     sources: [...sources],
     hasData,
   };
+}
+
+/**
+ * Hours one available person contributes per month. The bemanningsplan models
+ * availability in PERSONS (e.g. "Teoretisk tilgjengelig 6/2" = 31.5 personer),
+ * while demand questions are in HOURS ("29 000 timer"). We convert with a
+ * documented constant — 48 t/uke (Normaluke_timer) × ~4.33 uker/mnd ≈ 208 — so
+ * the comparison is unit-consistent. It is an ESTIMATE; callers must say so.
+ */
+export const HOURS_PER_PERSON_MONTH = 208;
+
+export interface MonthlyHours {
+  /** Available HOURS per role for the month (persons × HOURS_PER_PERSON_MONTH). */
+  byRole: Map<CanonicalRole, number>;
+  /** The month entry used, as stored (e.g. "2026-08"). */
+  monthLabel: string;
+}
+
+/**
+ * Available HOURS for a single month, converted from the per-month PERSONS in
+ * `avail.byMonth`. `monthRef` may be a Norwegian month name ("august") or an ISO
+ * label ("2026-08"); matching is by month index (and year when both carry one).
+ * Returns null when no month was given or no matching month exists — the caller
+ * then decides on a fallback rather than summing persons across months.
+ */
+export function availableHoursForMonth(
+  avail: StructuredAvailability,
+  monthRef: string | null,
+): MonthlyHours | null {
+  if (!monthRef) return null;
+  const target = parseAnyMonth(monthRef);
+  if (!target) return null;
+  const entry = avail.byMonth.find((m) => {
+    const p = parseAnyMonth(m.month);
+    if (!p || p.month !== target.month) return false;
+    if (target.year !== null && p.year !== null && p.year !== target.year) return false;
+    return true;
+  });
+  if (!entry) return null;
+  const byRole = new Map<CanonicalRole, number>();
+  for (const role of CANONICAL_ROLES) {
+    const persons = entry.byRole[role];
+    if (persons !== undefined) byRole.set(role, persons * HOURS_PER_PERSON_MONTH);
+  }
+  return { byRole, monthLabel: entry.month };
 }

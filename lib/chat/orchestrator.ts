@@ -71,7 +71,7 @@ import {
   guardUnverifiedMetric,
   guardUnsupportedCapacity,
 } from "@/lib/chat/answerVerifier";
-import { ALL_ROLE_TERMS } from "@/lib/chat/roles";
+import { ALL_ROLE_TERMS, type CanonicalRole } from "@/lib/chat/roles";
 import {
   analyzeCapacity,
   formatCapacityNote,
@@ -81,6 +81,8 @@ import { routeMessage, type Route } from "@/lib/chat/router";
 import {
   readStructuredAvailability,
   readMonthlyAvailabilityFromText,
+  availableHoursForMonth,
+  HOURS_PER_PERSON_MONTH,
   type StructuredAvailability,
 } from "@/lib/chat/capacityStructured";
 import { getEndreClient } from "@/lib/endre/client";
@@ -940,12 +942,40 @@ export async function runChat(
         intent.capacityDemand.roles.length > 0),
   );
   if (intent.capacity && hasRealDemand && !suppressDemandAnalysis) {
+    // Availability is modelled in PERSONS per month; the demand is in HOURS. When
+    // we have structured per-month data, convert the relevant month's persons to
+    // hours (× HOURS_PER_PERSON_MONTH) and compare PER MONTH — never sum persons
+    // across months, and never fall back to scraping the rotation grid (which
+    // produced the absurd million-hour totals). Falls back to the first month
+    // when the demand states none, and notes that the figure is an estimate.
+    let availabilityHours: Map<CanonicalRole, number> | undefined;
+    let availabilityMonth: string | null = null;
+    if (structuredAvail && structuredAvail.byMonth.length > 0) {
+      const forMonth =
+        availableHoursForMonth(structuredAvail, intent.capacityDemand!.startMonth) ??
+        availableHoursForMonth(structuredAvail, structuredAvail.byMonth[0].month);
+      if (forMonth && forMonth.byRole.size > 0) {
+        availabilityHours = forMonth.byRole;
+        availabilityMonth = forMonth.monthLabel;
+      }
+    }
     const analysis = analyzeCapacity(
       intent.capacityDemand!,
-      matches,
-      structuredAvail?.byRole,
+      // When we have structured month-hours, do NOT pass the raw chunks — that is
+      // what let the text scraper sum rotation-grid serials into millions.
+      availabilityHours ? [] : matches,
+      availabilityHours ?? structuredAvail?.byRole,
     );
     notes.push(formatCapacityNote(analysis));
+    if (availabilityHours) {
+      notes.push(
+        `Tilgjengelig kapasitet over er et ESTIMAT: tilgjengelige personer × ` +
+          `${HOURS_PER_PERSON_MONTH} t/person/mnd (48 t/uke) for måneden ` +
+          `${availabilityMonth ?? "(første i planen)"}. Sammenlign behovet mot riktig ` +
+          `måned — ikke summer kapasitet på tvers av måneder. Si tydelig at tallet er ` +
+          `et estimat, og oppgi hvilken måned det gjelder.`,
+      );
+    }
     context.capacity_demand = {
       totalHours: analysis.totalDemandHours,
       startMonth: analysis.startMonth,
