@@ -18,7 +18,7 @@
 
 import { NextResponse } from "next/server";
 import { validateEnv } from "@/lib/env";
-import { runChat } from "@/lib/chat/orchestrator";
+import { runAssistantTurn } from "@/lib/assistant";
 import {
   errorTypeOf,
   logChatError,
@@ -103,9 +103,9 @@ export async function POST(request: Request) {
     return clientError("Tjenesten er ikke riktig konfigurert.", 500, requestId);
   }
 
-  // --- Run orchestration ----------------------------------------------------
+  // --- Run the assistant turn (runner is the public entry) ------------------
   try {
-    const result = await runChat(message.trim(), requestId, history);
+    const result = await runAssistantTurn(message.trim(), requestId, history);
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     // Log by type only — never the message/stack (may contain sensitive data).
