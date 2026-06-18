@@ -114,6 +114,38 @@ function key(month: number, year: number | null, refYear: number | null): number
 }
 
 /**
+ * Canonical ISO month label "YYYY-MM" for a parsed (month, year), or null when
+ * no year is known (ISO needs a year). This is the storage form for normalized
+ * capacity rows — language-independent and sortable.
+ */
+export function toISOMonth(parsed: ParsedMonth): string | null {
+  if (parsed.year === null) return null;
+  return `${parsed.year}-${String(parsed.month).padStart(2, "0")}`;
+}
+
+/** Parse an ISO month label "YYYY-MM" back to (month, year), or null. */
+export function parseISOMonth(iso: string): ParsedMonth | null {
+  const m = iso.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  const month = Number.parseInt(m[2], 10);
+  if (month < 1 || month > 12) return null;
+  return { month, year: Number.parseInt(m[1], 10) };
+}
+
+/**
+ * Parse a month from EITHER an ISO label ("2026-09") or free text ("september
+ * 2026" / "Aug."). Lets callers store ISO yet still match name-bearing input.
+ */
+export function parseAnyMonth(text: string): ParsedMonth | null {
+  return parseISOMonth(text) ?? parseMonth(text);
+}
+
+/** True when a parsed (month, year) falls INSIDE the bound (inclusive per kind). */
+export function isMonthInBound(parsed: ParsedMonth, bound: MonthBound): boolean {
+  return !isMonthOutsideBound(parsed.month, parsed.year, bound);
+}
+
+/**
  * Filter a list of month-bearing rows to those inside the bound. Rows whose
  * month cell cannot be parsed are dropped (we never show a month we can't place
  * inside the requested range). Keeps input order.
