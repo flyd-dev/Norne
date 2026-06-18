@@ -40,7 +40,7 @@ import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/chat/prompts";
 import { logChatResolved, logEndreDiagnostics, logChatPlan } from "@/lib/logger";
-import { endreReady } from "@/lib/env";
+import { endreReady, env } from "@/lib/env";
 import {
   resolveFollowUp,
   type ChatHistoryMessage,
@@ -331,13 +331,17 @@ export async function runChat(
   // Runner owns the turn's tool decision (planner-of-record). Deterministic in
   // the live path (provider = null); the LLM tool-choice family-refinement is
   // available but kept off here so the live path stays deterministic.
+  // LLM tool-choice is opt-in (ASSISTANT_LLM_TOOL_CHOICE). When off (default),
+  // the runner plans deterministically; when on, it may refine the choice within
+  // the source-policy family on low-confidence turns.
+  const toolChoiceProvider = env.assistant.llmToolChoice() ? getLLMProvider() : null;
   const toolPlan = await planTurnTools(
     plan,
     chatState,
     { required: false, reason: null },
     message,
     toolRegistry,
-    null,
+    toolChoiceProvider,
   );
   const endreHint = {
     projectNumber: plan.entities.projectNumber ?? null,

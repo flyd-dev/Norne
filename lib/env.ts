@@ -54,6 +54,14 @@ export const env = {
     // admin routes are disabled (not the chatbot). Never sent to the browser.
     uploadToken: () => readOptional("ADMIN_UPLOAD_TOKEN"),
   },
+  assistant: {
+    // Opt-in: let the LLM refine the tool choice (within the deterministic
+    // source-policy family) on low-confidence turns. DISABLED by default — the
+    // deterministic planner stays primary. Costs one extra model call when it
+    // actually fires (only on low-confidence turns).
+    llmToolChoice: () =>
+      (readOptional("ASSISTANT_LLM_TOOL_CHOICE") ?? "false").toLowerCase() === "true",
+  },
   documents: {
     // Local JSON file holding uploaded-document metadata + chunks. Uploaded
     // documents are NOT stored in Firestore (Firestore is only project data).

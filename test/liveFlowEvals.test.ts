@@ -126,3 +126,27 @@ describe("live flow", () => {
     expect(r.diagnostics?.toolsRun).toContainEqual({ tool: "getProjectMetric", coverage: "partial" });
   });
 });
+
+describe("LLM tool-choice flag (ASSISTANT_LLM_TOOL_CHOICE)", () => {
+  it("off by default: capacity stays getMonthlyCapacity, no extra model call", async () => {
+    store.tables = [monthTable("juli 2026")];
+    const r = await runChat("Vis kapasitet frem til juli 2026", "req", []);
+    expect(r.diagnostics?.toolsPlanned).toEqual(["getMonthlyCapacity"]);
+    // Only the answer-generation call happened (no tool-choice call).
+    expect(cap.inputs).toHaveLength(1);
+  });
+
+  it("on: a low-confidence capacity turn lets the model override within the family", async () => {
+    vi.stubEnv("ASSISTANT_LLM_TOOL_CHOICE", "true");
+    // The deterministic choice for "har vi nok folk totalt" is getAvailableCapacity;
+    // the model overrides to the sibling getMonthlyCapacity (same capacity family).
+    cap.reply = "getMonthlyCapacity";
+    store.tables = [monthTable("juli 2026")];
+    try {
+      const r = await runChat("Har vi nok folk totalt?", "req", []);
+      expect(r.diagnostics?.toolsPlanned).toEqual(["getMonthlyCapacity"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
