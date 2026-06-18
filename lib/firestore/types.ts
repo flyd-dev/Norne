@@ -56,3 +56,25 @@ export interface FirestoreClient {
     subcollection: string,
   ): Promise<void>;
 }
+
+/** Error from a Firestore REST request, carrying the HTTP status. */
+export class FirestoreRequestError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "FirestoreRequestError";
+    this.status = status;
+  }
+}
+
+/**
+ * True when an error looks like a Firestore "permission denied" — covers the
+ * REST backend (HTTP 403 / message) and the Admin SDK (gRPC code 7).
+ */
+export function isPermissionDenied(error: unknown): boolean {
+  if (error instanceof FirestoreRequestError && error.status === 403) return true;
+  const e = error as { code?: unknown; message?: unknown } | null;
+  if (e?.code === 7 || e?.code === "permission-denied") return true;
+  const message = String(e?.message ?? "");
+  return /permission[_\s-]?denied|HTTP 403|\b403\b/i.test(message);
+}

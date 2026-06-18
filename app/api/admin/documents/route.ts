@@ -18,11 +18,12 @@ import {
   ExtractionError,
   UnsupportedFileTypeError,
 } from "@/lib/documents/types";
-import {
-  errorTypeOf,
-  logChatError,
-  newRequestId,
-} from "@/lib/logger";
+import { isPermissionDenied } from "@/lib/firestore/types";
+import { logAdminError, newRequestId } from "@/lib/logger";
+
+const PERMISSION_DENIED_MESSAGE =
+  "Firestore-tilgang er avvist for samlingen «knowledge_documents». " +
+  "Sjekk Firestore-reglene, eller bruk en tjenestekonto (Admin SDK).";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,10 +50,17 @@ export async function GET(request: Request) {
 
   const requestId = newRequestId();
   try {
+    // An empty / non-existent knowledge_documents collection yields [] (not 500).
     const documents = await listDocuments();
     return NextResponse.json({ documents }, { status: 200 });
   } catch (error) {
-    logChatError(requestId, errorTypeOf(error));
+    logAdminError(requestId, "list", error);
+    if (isPermissionDenied(error)) {
+      return NextResponse.json(
+        { error: PERMISSION_DENIED_MESSAGE, requestId },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       { error: "Kunne ikke hente dokumentlisten.", requestId },
       { status: 500 },
@@ -150,7 +158,13 @@ export async function POST(request: Request) {
       // Safe to surface these messages (no secrets / no file contents).
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
-    logChatError(requestId, errorTypeOf(error));
+    logAdminError(requestId, "upload", error);
+    if (isPermissionDenied(error)) {
+      return NextResponse.json(
+        { error: PERMISSION_DENIED_MESSAGE, requestId },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       { error: "Kunne ikke behandle filen.", requestId },
       { status: 500 },

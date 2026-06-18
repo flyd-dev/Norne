@@ -7,7 +7,8 @@
 import { NextResponse } from "next/server";
 import { adminConfigured, isAdminAuthorized } from "@/lib/admin/auth";
 import { deleteDocument } from "@/lib/documents/store";
-import { errorTypeOf, logChatError, newRequestId } from "@/lib/logger";
+import { isPermissionDenied } from "@/lib/firestore/types";
+import { logAdminError, newRequestId } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,17 @@ export async function DELETE(
     await deleteDocument(id);
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
-    logChatError(requestId, errorTypeOf(error));
+    logAdminError(requestId, "delete", error);
+    if (isPermissionDenied(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Firestore-tilgang er avvist for «knowledge_documents». Sjekk reglene eller bruk Admin SDK.",
+          requestId,
+        },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       { error: "Kunne ikke slette dokumentet.", requestId },
       { status: 500 },

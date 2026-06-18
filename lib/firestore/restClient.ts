@@ -12,7 +12,11 @@
 
 import "server-only";
 import { env } from "@/lib/env";
-import type { FirestoreClient, FirestoreDoc } from "@/lib/firestore/types";
+import {
+  FirestoreRequestError,
+  type FirestoreClient,
+  type FirestoreDoc,
+} from "@/lib/firestore/types";
 
 const IDENTITY_URL =
   "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword";
@@ -151,9 +155,13 @@ async function firestoreGet(path: string): Promise<unknown> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
+  // A missing collection/document returns 404 — treat as "no documents".
   if (res.status === 404) return { documents: [] };
   if (!res.ok) {
-    throw new Error(`Firestore REST request failed (HTTP ${res.status}).`);
+    throw new FirestoreRequestError(
+      `Firestore REST request failed (HTTP ${res.status}).`,
+      res.status,
+    );
   }
   return res.json();
 }
@@ -193,7 +201,10 @@ async function firestorePatch(
     body: JSON.stringify({ fields: encodeFields(data) }),
   });
   if (!res.ok) {
-    throw new Error(`Firestore REST write failed (HTTP ${res.status}).`);
+    throw new FirestoreRequestError(
+      `Firestore REST write failed (HTTP ${res.status}).`,
+      res.status,
+    );
   }
 }
 
@@ -205,7 +216,10 @@ async function firestoreDelete(path: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok && res.status !== 404) {
-    throw new Error(`Firestore REST delete failed (HTTP ${res.status}).`);
+    throw new FirestoreRequestError(
+      `Firestore REST delete failed (HTTP ${res.status}).`,
+      res.status,
+    );
   }
 }
 

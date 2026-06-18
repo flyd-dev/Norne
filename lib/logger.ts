@@ -48,3 +48,32 @@ export function errorTypeOf(error: unknown): string {
   if (error instanceof Error) return error.name || "Error";
   return "UnknownError";
 }
+
+/**
+ * A short, safe error message for logs. Firestore/HTTP errors are safe to log
+ * (no secrets / no document contents); truncated as a precaution.
+ */
+export function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message.slice(0, 300);
+  }
+  return "unknown";
+}
+
+/**
+ * Log an admin document-route error with enough detail to debug, but no secrets
+ * or document contents. `action` is the route action (list/upload/delete).
+ */
+export function logAdminError(
+  requestId: string,
+  action: string,
+  error: unknown,
+): void {
+  emit("error", {
+    evt: "admin_documents_error",
+    requestId,
+    action,
+    errorType: errorTypeOf(error),
+    message: safeErrorMessage(error),
+  });
+}
