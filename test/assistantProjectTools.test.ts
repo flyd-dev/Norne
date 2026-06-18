@@ -10,6 +10,7 @@ import {
   getProjectMetric,
   getProjectSummary,
   getProjectList,
+  compareProjects,
 } from "@/lib/assistant/tools/projects";
 import { searchChartOfAccounts, getAccountForPurchase } from "@/lib/assistant/tools/accounts";
 import { searchUploadedDocuments } from "@/lib/assistant/tools/documents";
@@ -72,6 +73,40 @@ describe("getProjectSummary / getProjectList", () => {
     });
     expect(r.coverage).toBe("full");
     expect(r.data!.length).toBe(1);
+  });
+});
+
+describe("compareProjects", () => {
+  it("normalizes each project with its own source, no conflation", async () => {
+    const r = await compareProjects.run(
+      {
+        projects: [
+          { record: { project_number: "7100", project_name: "Pilestredet", kontraktsverdi: 150705668 }, source: "firebase" },
+          { record: { project_number: 3025, project_name: "AFBO NORA", amounts: { totals: { TotalAmount: 22938804 } } }, source: "endre" },
+        ],
+      },
+      {},
+    );
+    expect(r.coverage).toBe("full");
+    expect(r.data).toHaveLength(2);
+    expect(r.data![0]).toMatchObject({ projectNumber: "7100", source: "firebase" });
+    expect(r.data![1]).toMatchObject({ projectNumber: "3025", source: "endre" });
+    // 3025 (Endre) carries no contract-value field — never invented.
+    expect(r.data![1].fields.kontraktsverdi).toBeUndefined();
+  });
+
+  it("is partial when some referenced projects were not found", async () => {
+    const r = await compareProjects.run(
+      { projects: [{ record: { project_number: "7100" }, source: "firebase" }], missing: ["9999"] },
+      {},
+    );
+    expect(r.coverage).toBe("partial");
+    expect(r.note).toContain("9999");
+  });
+
+  it("is none when nothing was found", async () => {
+    const r = await compareProjects.run({ projects: [], missing: ["1", "2"] }, {});
+    expect(r.coverage).toBe("none");
   });
 });
 

@@ -14,7 +14,12 @@ import {
   readMetricField,
   type Metric,
 } from "@/lib/chat/metricResolver";
-import type { ProjectMetricValue, ProjectRef } from "@/lib/assistant/domain/project";
+import type {
+  Project,
+  ProjectMetricValue,
+  ProjectRef,
+} from "@/lib/assistant/domain/project";
+import { toProject } from "@/lib/assistant/ingestion/entities";
 import {
   ok,
   none,
@@ -96,6 +101,48 @@ export const getProjectSummary: Tool<Record<string, never>, Record<string, unkno
       return none("Fant ikke prosjektet.", ctx.projectSources ?? []);
     }
     return ok(ctx.projectRecord, ctx.projectSources ?? []);
+  },
+};
+
+export interface CompareProjectsInput {
+  /** Pre-gathered project records, each with the source it came from. */
+  projects: { record: Record<string, unknown>; source: "endre" | "firebase" }[];
+  /** Referenced project numbers that could not be found anywhere. */
+  missing?: string[];
+}
+
+export const compareProjects: Tool<CompareProjectsInput, Project[]> = {
+  name: "compareProjects",
+  description:
+    "Sammenlign flere prosjekter side om side. Hvert prosjekt beholder sin egen " +
+    "kilde og felter — Endre-beløp blandes aldri med lokale nøkkeltall.",
+  validate: (raw) => {
+    const input = raw as Partial<CompareProjectsInput> | null;
+    if (!input || !Array.isArray(input.projects)) {
+      return { ok: false, error: "projects[] is required" };
+    }
+    return {
+      ok: true,
+      input: {
+        projects: input.projects,
+        missing: Array.isArray(input.missing) ? input.missing : [],
+      },
+    };
+  },
+  async run(input): Promise<ToolResult<Project[]>> {
+    const projects = input.projects.map((p) => toProject(p.record, p.source));
+    if (projects.length === 0) {
+      return none("Fant ingen av de etterspurte prosjektene.");
+    }
+    const missing = input.missing ?? [];
+    if (missing.length > 0) {
+      return partial(
+        projects,
+        [],
+        `Fant ${projects.length} prosjekt(er); fant ikke: ${missing.join(", ")}.`,
+      );
+    }
+    return ok(projects, []);
   },
 };
 

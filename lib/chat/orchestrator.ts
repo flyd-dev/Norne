@@ -46,7 +46,7 @@ import {
   type ChatHistoryMessage,
 } from "@/lib/chat/followup";
 import { planQuestion } from "@/lib/chat/questionPlanner";
-import { resolveEntity } from "@/lib/chat/entityResolver";
+import { resolveEntity, extractProjectNumbersFromText } from "@/lib/chat/entityResolver";
 import {
   extractHistoryFacts,
   metricForResolvedProject,
@@ -59,7 +59,7 @@ import {
 } from "@/lib/chat/dateRange";
 import { getMonthlyCapacity } from "@/lib/assistant/tools/capacity";
 import { capacityRowsFromTables } from "@/lib/assistant/ingestion/capacity";
-import { getProjectMetric } from "@/lib/assistant/tools/projects";
+import { getProjectMetric, compareProjects } from "@/lib/assistant/tools/projects";
 import type { MonthlyCapacity } from "@/lib/assistant/domain/capacity";
 import {
   buildProjectMetricAnswer,
@@ -353,6 +353,16 @@ export async function runChat(
   // project_list: combine Endre (live) + Firestore/local projects. Tracked here
   // so the counts can reach diagnostics regardless of which branches run.
   const isProjectList = decision.route === "project_list";
+  // Multi-project comparison: a project question that names 2+ project numbers
+  // ("sammenlign 7100 og 3025") must gather EACH project separately so they are
+  // never confused or their sources conflated. Resolved in its own block below.
+  const comparedNumbers =
+    !isProjectList &&
+    (decision.route === "project_summary" || plan.intent === "project_metric")
+      ? extractProjectNumbersFromText(message)
+      : [];
+  const multiProjectMode = comparedNumbers.length >= 2;
+  let multiProjectHandled = false;
   let endreProjectCount = 0;
   let firestoreProjectCount = 0;
   let combinedProjectCount = 0;
@@ -476,14 +486,76 @@ export async function runChat(
     );
   }
 
+  const endreSources: string[] = [];
+  let endreHandledProjects = false;
+
+  // --- Multi-project comparison (2+ named projects) -------------------------
+  // Gather each referenced project on its own — Endre (live) when present, else
+  // Firestore — and hand the model one block per project with its own source.
+  // This is what stops "sammenlign 7100 og 3025" from confusing the two or
+  // passing one project's numbers off as the other's.
+  if (multiProjectMode) {
+    const fsProjects = await getProjects();
+    firestoreCollections.push(COLLECTIONS.projects);
+    const endreClient = getEndreClient();
+    const gathered: { record: Record<string, unknown>; source: "endre" | "firebase" }[] = [];
+    const display: Record<string, unknown>[] = [];
+    const missing: string[] = [];
+    for (const num of comparedNumbers) {
+      let handled = false;
+      if (endreClient) {
+        const endre = await buildEndreProjectContext(num, endreClient, undefined, {
+          projectNumber: num,
+        });
+        const rec = endre?.context.endre_project as Record<string, unknown> | undefined;
+        if (rec) {
+          gathered.push({ record: rec, source: "endre" });
+          display.push({ source: "endre", ...rec });
+          endreSources.push(...endre!.sources);
+          handled = true;
+        }
+      }
+      if (!handled) {
+        const doc = fsProjects.find(
+          (p) => String(p.project_number ?? "").trim() === num,
+        );
+        if (doc) {
+          gathered.push({ record: doc, source: "firebase" });
+          display.push({ source: "firebase", ...normalizeProject(doc, includeIds) });
+          handled = true;
+        }
+      }
+      if (!handled) missing.push(num);
+    }
+
+    const cmp = await compareProjects.run({ projects: gathered, missing }, {});
+    toolRuns.push({ tool: "compareProjects", coverage: cmp.coverage });
+
+    if (gathered.length >= 2) {
+      multiProjectHandled = true;
+      endreHandledProjects = gathered.some((g) => g.source === "endre");
+      context.compare_projects = display;
+      notes.push(
+        "Feltet «compare_projects» har ett objekt per prosjekt, hvert med sin egen " +
+          "«source» (endre eller firebase). Sammenlign KUN felter som finnes i samme " +
+          "prosjekt fra samme kilde. Endre har bare generelle beløpsposter " +
+          "(TotalAmount/accepted/rejected/pending) — kall dem aldri «kontraktsverdi», " +
+          "«forventet resultat» e.l., og sammenlign dem aldri mot lokale nøkkeltall som " +
+          "betyr noe annet. Si tydelig per prosjekt hvilke tall som finnes og hvilke som " +
+          "mangler. Ikke finn på verdier for et prosjekt fra et annet." +
+          (missing.length > 0
+            ? ` Disse prosjektnumrene ble ikke funnet: ${missing.join(", ")}.`
+            : ""),
+      );
+    }
+  }
+
   // --- Optional Endre live data (project questions) -------------------------
   // For project-summary questions, prefer live Endre data when the integration
   // is enabled AND credentials are configured (getEndreClient enforces both;
   // it returns null otherwise, so no Endre call is ever made). Any failure or a
   // missing project returns null and we fall through to Firebase/documents.
-  const endreSources: string[] = [];
-  let endreHandledProjects = false;
-  if (decision.route === "project_summary") {
+  if (decision.route === "project_summary" && !multiProjectHandled) {
     // `endreReady()` mirrors what getEndreClient() gates on; logged separately so
     // diagnostics distinguish "integration off/misconfigured" from "Endre tried
     // but produced nothing". getEndreClient() returns null in the former case.
@@ -548,6 +620,7 @@ export async function runChat(
   let projects: FirestoreDoc[] = [];
   const needProjectsList =
     !endreHandledProjects &&
+    !multiProjectHandled &&
     !isProjectList &&
     // Respect the route: don't pull projects into a route that excludes them
     // (e.g. account_list reached via the keyword-free projects+accounts fallback).
@@ -639,7 +712,10 @@ export async function runChat(
   const isMetricLookup =
     Boolean(plan.metric) &&
     plan.intent === "project_metric" &&
-    decision.route === "project_summary";
+    decision.route === "project_summary" &&
+    // A multi-project comparison answers from compare_projects, not the single-
+    // project deterministic-metric path.
+    !multiProjectHandled;
   if (plan.metric && isMetricLookup) {
     // Read the value through the getProjectMetric TOOL (Firestore doc first,
     // then the live Endre record). The tool encodes the contract-value honesty

@@ -71,6 +71,24 @@ export function extractProjectNumberFromText(text: string): string | null {
 }
 
 /**
+ * Extract ALL distinct project-number tokens from the message (3–6 digits),
+ * dropping 4-digit years. Used to detect a multi-project question ("sammenlign
+ * 7100 og 3025"). Order-preserving, de-duplicated.
+ */
+export function extractProjectNumbersFromText(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = /(?<![\d.,%])\b(\d{3,6})\b(?![\d.,%])/g;
+  for (const m of text.matchAll(re)) {
+    const tok = m[1];
+    if (YEAR_RE.test(tok) || seen.has(tok)) continue;
+    seen.add(tok);
+    out.push(tok);
+  }
+  return out;
+}
+
+/**
  * Extract a candidate project NAME from the message text alone (no list). Used
  * so the Endre source can tell a specific-project question ("kontraktsverdi på
  * Pilestredet prosjektet") apart from a general "which projects exist?" one,

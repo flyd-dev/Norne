@@ -9,6 +9,7 @@ import {
   getProjectMetric,
   getProjectSummary,
   getProjectList,
+  compareProjects,
 } from "@/lib/assistant/tools/projects";
 import {
   searchChartOfAccounts,
@@ -25,6 +26,7 @@ export function buildRegistry(): ToolRegistry {
     .register(getProjectMetric)
     .register(getProjectSummary)
     .register(getProjectList)
+    .register(compareProjects)
     .register(searchChartOfAccounts)
     .register(getAccountForPurchase)
     .register(searchUploadedDocuments)
@@ -38,6 +40,7 @@ export const TOOL_NAMES = [
   "getProjectMetric",
   "getProjectSummary",
   "getProjectList",
+  "compareProjects",
   "searchChartOfAccounts",
   "getAccountForPurchase",
   "searchUploadedDocuments",
