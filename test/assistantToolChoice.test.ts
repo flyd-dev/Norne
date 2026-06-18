@@ -66,14 +66,25 @@ describe("resolveToolPlan", () => {
     expect(r.tools).toEqual(["getMonthlyCapacity"]);
   });
 
-  it("keeps deterministic choice when not advised", async () => {
+  it("broad mode: asks the model even when not low-confidence (family has siblings)", async () => {
     const r = await resolveToolPlan(
       plan({ llmFallbackAdvised: false }),
       "x",
       desc,
       provider("getAvailableCapacity"),
     );
-    expect(r.tools).toEqual(["getMonthlyCapacity"]);
+    // Capacity family has 2 members, so with a provider the model is consulted.
+    expect(r.tools).toEqual(["getAvailableCapacity"]);
+  });
+
+  it("single-member family with no low-confidence signal stays deterministic", async () => {
+    const r = await resolveToolPlan(
+      plan({ tools: ["searchUploadedDocuments"], llmFallbackAdvised: false }),
+      "x",
+      { searchUploadedDocuments: "dok" },
+      provider("getMonthlyCapacity"),
+    );
+    expect(r.tools).toEqual(["searchUploadedDocuments"]);
   });
 
   it("falls back on provider error", async () => {

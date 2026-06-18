@@ -96,10 +96,15 @@ function familyOf(tool: ToolName): ToolName[] {
 }
 
 /**
- * Resolve the final tool plan. When the deterministic planner flagged low
- * confidence (llmFallbackAdvised) and a provider is available, let the model pick
- * among the deterministic tool's FAMILY; otherwise keep the deterministic choice.
- * Falls back to the deterministic plan on any decline/error.
+ * Resolve the final tool plan. When a provider is available (the
+ * ASSISTANT_LLM_TOOL_CHOICE flag is on), let the model pick among the
+ * deterministic tool's FAMILY whenever there is a real choice to make — i.e. the
+ * family has siblings (monthly vs total capacity, metric vs summary vs list,
+ * account search vs purchase) OR the deterministic planner flagged low
+ * confidence. Single-member families (e.g. documents) are left deterministic
+ * since there is nothing to choose. The model can disambiguate within a source
+ * but never cross the source policy; any decline/error falls back to the
+ * deterministic plan.
  */
 export async function resolveToolPlan(
   toolPlan: ToolPlan,
@@ -107,10 +112,10 @@ export async function resolveToolPlan(
   descriptions: Partial<Record<ToolName, string>>,
   provider: LLMProvider | null,
 ): Promise<ToolPlan> {
-  if (!toolPlan.llmFallbackAdvised || toolPlan.tools.length === 0 || !provider) {
-    return toolPlan;
-  }
+  if (!provider || toolPlan.tools.length === 0) return toolPlan;
   const family = familyOf(toolPlan.tools[0]);
+  // Nothing to choose: a single-member family and no low-confidence signal.
+  if (family.length <= 1 && !toolPlan.llmFallbackAdvised) return toolPlan;
   const candidates: ToolCandidate[] = family.map((name) => ({
     name,
     description: descriptions[name] ?? name,
