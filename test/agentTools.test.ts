@@ -1,7 +1,8 @@
 /**
- * Agent tool tests: capacity against the REAL workbook, project/account/document
- * tools with mocked I/O. Confirms the agent tools delegate to the deterministic
- * tools (September included, persons→hours estimate, source isolation, honesty).
+ * Generic agent tool tests: the tools expose RAW data (the model reasons over
+ * it). Capacity sheets come from the REAL workbook; projects/accounts/documents
+ * use mocked I/O. We assert the tools hand over the actual data + sources, not
+ * that they compute domain answers (that is now the model's job).
  */
 
 import { describe, expect, it } from "vitest";
@@ -13,7 +14,6 @@ import type { EndreClient } from "@/lib/endre/client";
 
 const tool = (name: string) => AGENT_TOOLS.find((t) => t.name === name)!;
 
-// Load the real workbook's structured tables once.
 let cached: StoredStructuredTable[] | null = null;
 async function loadRealTables(): Promise<StoredStructuredTable[]> {
   if (cached) return cached;
@@ -47,79 +47,65 @@ function deps(over: Partial<AgentDeps> = {}): AgentDeps {
     getStructuredTables: loadRealTables,
     getProjects: async () => [],
     getAccounts: async () => [],
+    listDocuments: async () => [],
     searchDocuments: async () => [],
     endreClient: null,
     ...over,
   };
 }
 
-describe("agent tools — capacity (real workbook)", () => {
-  it("get_monthly_capacity includes September with per-fag values", async () => {
-    const r = (await tool("get_monthly_capacity").execute(
-      { until_month: "2026-09" },
-      deps(),
-    )) as { coverage: string; data: { months: { month: string; byRole: Record<string, number> }[] } };
-    expect(r.coverage).toBe("full");
-    expect(r.data.months.map((m) => m.month)).toEqual(["2026-07", "2026-08", "2026-09"]);
-    expect(r.data.months[2].byRole["Steel fixer"]).toBe(31.5);
+describe("generic agent tools", () => {
+  it("read_staffing_sheets hands over the raw Kapasitetsanalyse rows + columns", async () => {
+    const r = (await tool("read_staffing_sheets").execute({ sheet: "kapasitet" }, deps())) as {
+      sources: string[];
+      sheets: { sheet: string; columns: Record<string, string>; rows: { month: string; role: string | null; availableHours: number | null }[] }[];
+    };
+    const ka = r.sheets.find((s) => /kapasitetsanalyse/i.test(s.sheet))!;
+    // The model sees the real column meanings and the actual rows.
+    expect(ka.columns.availableHours).toBe("Teoretisk tilgjengelig 6/2");
+    expect(ka.columns.role).toBe("Arbeidstype");
+    const sep = ka.rows.find((x) => x.month === "2026-09" && x.role === "Steel fixer")!;
+    expect(sep.availableHours).toBe(31.5);
+    expect(r.sources).toContain("bemanningsplan_ai_demo_betong_2026.xlsx");
   });
 
-  it("get_available_hours_for_month converts august persons to hours", async () => {
-    const r = (await tool("get_available_hours_for_month").execute(
-      { month: "august" },
-      deps(),
-    )) as { found: boolean; month: string; availableHours: Record<string, number>; estimate: boolean };
-    expect(r.found).toBe(true);
-    expect(r.month).toBe("2026-08");
-    expect(r.estimate).toBe(true);
-    expect(r.availableHours["Carpenter"]).toBeCloseTo(12022.4, 1);
+  it("get_projects returns local full fields + endre list, with sources", async () => {
+    const r = (await tool("get_projects").execute({}, deps({
+      getProjects: async () => [{ id: "F", project_number: "7100", project_name: "Pilestredet", kontraktsverdi: 150705668 }],
+      endreClient: endreClient([{ id: "E", project_number: 3025, project_name: "AFBO NORA" }]),
+    }))) as { projects: Record<string, unknown>[]; sources: string[] };
+    const local = r.projects.find((p) => p.project_number === "7100")!;
+    expect(local.kontraktsverdi).toBe(150705668);
+    expect(local.id).toBeUndefined(); // internal id stripped
+    expect(r.projects.some((p) => p.project_number === "3025" && p.source === "endre")).toBe(true);
+    expect(r.sources).toContain("Endre API: projects");
   });
-});
 
-describe("agent tools — projects / accounts / documents (mocked)", () => {
-  it("get_project resolves a Firestore project and exposes its fields", async () => {
-    const r = (await tool("get_project").execute(
-      { project: "7100" },
-      deps({ getProjects: async () => [{ id: "F", project_number: "7100", project_name: "Pilestredet", kontraktsverdi: 150705668 }] }),
-    )) as { found: boolean; source: string; fields: Record<string, unknown> };
+  it("get_project exposes one project's fields with an honest source", async () => {
+    const r = (await tool("get_project").execute({ project: "7100" }, deps({
+      getProjects: async () => [{ id: "F", project_number: "7100", project_name: "Pilestredet", kontraktsverdi: 5 }],
+    }))) as { found: boolean; source: string; fields: Record<string, unknown>; sources: string[] };
     expect(r.found).toBe(true);
     expect(r.source).toBe("firebase");
-    expect(r.fields.kontraktsverdi).toBe(150705668);
+    expect(r.fields.kontraktsverdi).toBe(5);
+    expect(r.sources).toEqual(["projects"]);
   });
 
-  it("compare_projects keeps each project on its own source", async () => {
-    const r = (await tool("compare_projects").execute(
-      { projects: ["7100", "3025"] },
-      deps({
-        getProjects: async () => [{ id: "F", project_number: "7100", project_name: "Pilestredet" }],
-        endreClient: endreClient([{ id: "E", project_number: 3025, project_name: "AFBO NORA" }]),
-      }),
-    )) as { coverage: string; data: { projectNumber: string; source: string }[] };
-    // Endre is tried first, so 7100 (not in Endre) falls to Firestore, 3025 → Endre.
-    const sources = Object.fromEntries(r.data.map((p) => [p.projectNumber, p.source]));
-    expect(sources["3025"]).toBe("endre");
-    expect(sources["7100"]).toBe("firebase");
-  });
-
-  it("search_chart_of_accounts ranks a matching account", async () => {
-    const r = (await tool("search_chart_of_accounts").execute(
-      { query: "arbeidshansker" },
-      deps({ getAccounts: async () => [{ id: "1", account_number: "6570", name: "Verneutstyr" }] }),
-    )) as { coverage: string; accounts: { account_number: string }[] };
-    expect(r.coverage).toBe("full");
+  it("get_accounts returns the chart of accounts", async () => {
+    const r = (await tool("get_accounts").execute({}, deps({
+      getAccounts: async () => [{ id: "1", account_number: "6570", name: "Verneutstyr" }],
+    }))) as { accounts: Record<string, unknown>[]; sources: string[] };
     expect(r.accounts[0].account_number).toBe("6570");
+    expect(r.accounts[0].id).toBeUndefined();
+    expect(r.sources).toEqual(["accounts"]);
   });
 
-  it("search_documents returns matching chunks", async () => {
-    const r = (await tool("search_documents").execute(
-      { query: "verneutstyr" },
-      deps({
-        searchDocuments: async () => [
-          { documentId: "a", documentName: "hms.pdf", fileType: "pdf", sheetName: null, chunkIndex: 0, score: 1, text: "verneutstyr" } as never,
-        ],
-      }),
-    )) as { coverage: string; data: { documentName: string }[] };
-    expect(r.coverage).toBe("full");
-    expect(r.data[0].documentName).toBe("hms.pdf");
+  it("list_sources orients the model over what exists", async () => {
+    const r = (await tool("list_sources").execute({}, deps({
+      getProjects: async () => [{ id: "F", project_number: "7100", project_name: "Pilestredet" }],
+      listDocuments: async () => [{ name: "hms.pdf", fileType: "pdf" }],
+    }))) as { projects: unknown[]; staffingSheets: { sheet: string }[]; documents: { name: string }[] };
+    expect(r.documents[0].name).toBe("hms.pdf");
+    expect(r.staffingSheets.some((s) => /kapasitetsanalyse/i.test(s.sheet))).toBe(true);
   });
 });

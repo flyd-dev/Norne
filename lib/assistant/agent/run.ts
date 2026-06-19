@@ -12,7 +12,7 @@ import "server-only";
 import { runAgent, type AgentMessage } from "@/lib/assistant/agent/loop";
 import { AGENT_TOOLS, type AgentDeps } from "@/lib/assistant/agent/agentTools";
 import { createOpenAIAgentModel } from "@/lib/llm/openaiAgent";
-import { getStructuredTables } from "@/lib/documents/store";
+import { getStructuredTables, listDocuments } from "@/lib/documents/store";
 import { getProjects, getAccounts } from "@/lib/firestore/service";
 import { searchDocuments, MAX_CAPACITY_MATCHES } from "@/lib/rag/documentSearch";
 import { getEndreClient } from "@/lib/endre/client";
@@ -21,26 +21,15 @@ import type { AgentModel } from "@/lib/assistant/agent/loop";
 import type { ChatDiagnostics, ChatResult } from "@/lib/chat/orchestrator";
 import type { HistoryMessage } from "@/lib/chat/historyFacts";
 
-const AGENT_SYSTEM = `Du er Norne Assistant, en hjelpsom intern assistent for Nornebygg. Du svarer naturlig og samtalebasert, som en vanlig chatbot.
+const AGENT_SYSTEM = `Du er Norne Assistant, en intern assistent for Nornebygg. Du svarer naturlig og samtalebasert, og du resonnerer selv over dataene.
 
-NÅR DU SKAL BRUKE VERKTØY:
-- Bruk verktøy KUN når brukeren faktisk ber om konkrete data: prosjektinfo/nøkkeltall, bemanning/kapasitet, kontoføring, eller innhold i opplastede dokumenter.
-- For hilsener, småprat, «hva kan du?», «hvorfor», spørsmål om deg selv, eller generelle spørsmål — SVAR DIREKTE uten å kalle verktøy. Ikke hent eller nevn tilfeldige prosjekter du ikke ble spurt om.
-- Hvis spørsmålet er uklart (hvilket prosjekt? hvilken periode?), still ett kort oppklaringsspørsmål i stedet for å gjette eller dumpe data.
+Du har verktøy som leser Nornes egne data: prosjekter, kontoplan, bemanningsplanens ark (rådata med kolonner og rader), og opplastede dokumenter. Bruk list_sources hvis du er usikker på hva som finnes. Les det du trenger og regn/vurder selv — det er ingen ferdige fasitsvar i verktøyene, bare dataene.
 
-NÅR DU BRUKER VERKTØY:
-- Tall, prosjektdata, kontoer, datoer og kapasitet skal komme fra verktøyresultater — finn aldri på dem.
-- Hvis et felt mangler (f.eks. kontraktsverdi i Endre), si det ærlig; bruk ikke et annet beløp som om det var feltet.
-- Bland aldri kilder: Endre-beløp (TotalAmount o.l.) er ikke «kontraktsverdi» eller «forventet resultat».
-- Kapasitet i timer fra get_available_hours_for_month er et ESTIMAT (personer × 208 t/mnd) — si at det er et estimat, hvilken måned og kilde.
+Bruk verktøy KUN når brukeren ber om konkrete data. På hilsener, småprat, «hva kan du?», «hvorfor» og spørsmål om deg selv: svar direkte uten verktøy, og ikke hent tilfeldige data du ikke ble bedt om.
 
-DETTE KAN DU HJELPE MED (bruk dette til å svare på «hva kan du?»):
-- Prosjekter: oppsummering og nøkkeltall (kontraktsverdi, resultat, fakturert, kostnader, datoer, timer), og sammenligning av prosjekter.
-- Bemanning/kapasitet: tilgjengelig kapasitet per fag per måned, og om dere har kapasitet til et gitt behov.
-- Kontoføring: foreslå riktig konto for et innkjøp.
-- Dokumenter: svare ut fra opplastede filer (Excel/PDF/Word).
+Vær ærlig: oppgi bare tall og fakta du faktisk finner i dataene. Mangler noe, eller er du usikker (f.eks. hva en kolonne betyr, eller om en enhet er personer eller timer), så si det heller enn å gjette. Bland ikke sammen felter fra ulike kilder som om de betyr det samme. Er spørsmålet uklart, still ett kort oppklaringsspørsmål.
 
-Svar kort, presist og på norsk. Oppgi kilde når du faktisk bruker tall fra et verktøy.`;
+Svar på norsk, kort og presist, og oppgi kilden (dokument/ark/prosjekt) når du bruker tall.`;
 
 /** Convert client history to agent messages (user/assistant turns only). */
 function toAgentHistory(history: HistoryMessage[]): AgentMessage[] {
@@ -57,6 +46,8 @@ function buildDeps(): AgentDeps {
     getStructuredTables,
     getProjects,
     getAccounts,
+    listDocuments: async () =>
+      (await listDocuments()).map((d) => ({ name: d.name, fileType: d.fileType })),
     searchDocuments: (q: string) => searchDocuments(q, { limit: MAX_CAPACITY_MATCHES }),
     endreClient: getEndreClient(),
   };

@@ -9,7 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StoredStructuredTable } from "@/lib/documents/types";
 
 const store = vi.hoisted(() => ({ tables: [] as StoredStructuredTable[] }));
-vi.mock("@/lib/documents/store", () => ({ getStructuredTables: async () => store.tables }));
+vi.mock("@/lib/documents/store", () => ({
+  getStructuredTables: async () => store.tables,
+  listDocuments: async () => [],
+}));
 vi.mock("@/lib/firestore/service", async (orig) => {
   const actual = await orig<typeof import("@/lib/firestore/service")>();
   return { ...actual, getProjects: vi.fn(async () => []), getAccounts: vi.fn(async () => []) };
@@ -37,14 +40,14 @@ function monthTable(month: string): StoredStructuredTable {
   };
 }
 
-/** Model that calls get_monthly_capacity once, then answers. */
+/** Model that reads the staffing sheets once, then answers. */
 function scriptedModel(): AgentModel {
   let step = 0;
   return {
     step: async () => {
       step += 1;
       if (step === 1) {
-        return { toolCalls: [{ id: "c1", name: "get_monthly_capacity", args: { until_month: "2026-09" } }] };
+        return { toolCalls: [{ id: "c1", name: "read_staffing_sheets", args: { sheet: "kapasitet" } }] };
       }
       return { content: "September 2026: Steel fixer 31.5 timer (kilde: Kapasitetsanalyse)." };
     },
@@ -60,8 +63,8 @@ describe("runAgentTurn (scripted model)", () => {
     const r = await runAgentTurn("Vis kapasitet frem til september 2026", "req", [], scriptedModel());
     expect(r.route).toBe("agent");
     expect(r.answer).toContain("September 2026");
-    // The capacity tool ran and its source was collected for citation.
-    expect(r.diagnostics?.toolsRun).toEqual([{ tool: "get_monthly_capacity", coverage: "ok" }]);
+    // The staffing-data tool ran and its source was collected for citation.
+    expect(r.diagnostics?.toolsRun).toEqual([{ tool: "read_staffing_sheets", coverage: "ok" }]);
     expect(r.sources.join()).toContain("bemanningsplan_ai_demo_betong_2026.xlsx");
   });
 

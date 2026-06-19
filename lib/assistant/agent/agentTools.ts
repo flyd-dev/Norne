@@ -1,50 +1,52 @@
 /**
- * Agent-facing tools: natural JSON-schema interfaces the model calls, each
- * self-contained (does its own I/O via injected deps) but delegating the actual
- * computation to the deterministic pure tools — so the agent orchestrates while
- * the tools still own the validated facts (coverage, contract-value honesty,
- * persons→hours estimate). I/O is injected so the set is unit-testable.
+ * Generic data-access tools for the reasoning agent.
+ *
+ * The philosophy here is "attach the data, let the model reason" — like dropping
+ * a file into ChatGPT/Claude. Instead of domain-specific tools with baked-in
+ * rules, these expose the RAW data sources (projects, accounts, staffing sheets,
+ * documents) and let gpt-5.5 read, understand and compute itself. The tools own
+ * no domain logic beyond fetching + light shaping; the model does the reasoning.
+ *
+ * I/O is injected (AgentDeps) so the set is unit-testable. Large tables are
+ * capped with an explicit note so a 3 900-row rotation grid can't blow the
+ * context — the model is told how many rows it didn't see.
  */
 
 import type { StoredStructuredTable } from "@/lib/documents/types";
 import type { FirestoreDoc } from "@/lib/firestore/types";
 import type { DocumentMatch } from "@/lib/rag/documentSearch";
 import type { EndreClient } from "@/lib/endre/client";
-import type { CanonicalRole } from "@/lib/chat/roles";
-import {
-  parseAnyMonth,
-  type MonthBound,
-} from "@/lib/chat/dateRange";
-import {
-  readStructuredAvailability,
-  availableHoursForMonth,
-  HOURS_PER_PERSON_MONTH,
-} from "@/lib/chat/capacityStructured";
-import { capacityRowsFromTables } from "@/lib/assistant/ingestion/capacity";
-import { getMonthlyCapacity } from "@/lib/assistant/tools/capacity";
-import { compareProjects } from "@/lib/assistant/tools/projects";
-import { getAccountForPurchase } from "@/lib/assistant/tools/accounts";
-import { searchUploadedDocuments } from "@/lib/assistant/tools/documents";
 import { toProject } from "@/lib/assistant/ingestion/entities";
-import { buildEndreProjectContext, dedupeProjects, listEndreProjects } from "@/lib/chat/endreSource";
+import {
+  buildEndreProjectContext,
+  dedupeProjects,
+  listEndreProjects,
+} from "@/lib/chat/endreSource";
 import type { AgentTool } from "@/lib/assistant/agent/loop";
 
-/** Request-scoped I/O the agent tools depend on (injected for testability). */
+/** Request-scoped I/O the agent reads from (injected for testability). */
 export interface AgentDeps {
   getStructuredTables: () => Promise<StoredStructuredTable[]>;
   getProjects: () => Promise<FirestoreDoc[]>;
   getAccounts: () => Promise<FirestoreDoc[]>;
+  listDocuments: () => Promise<{ name: string; fileType: string }[]>;
   searchDocuments: (query: string) => Promise<DocumentMatch[]>;
   endreClient: EndreClient | null;
 }
 
-const ROLE_ENUM = ["Steel fixer", "Carpenter", "Welder"];
+const MAX_ROWS_PER_SHEET = 120;
+const MAX_ACCOUNTS = 400;
 
-function asRole(v: unknown): CanonicalRole | null {
-  return v === "Steel fixer" || v === "Carpenter" || v === "Welder" ? v : null;
+/** Drop internal id-like fields before data reaches the model. */
+function stripIds(rec: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === "id" || /(_id|_uid)$/i.test(k) || /[a-z]Id$/.test(k)) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
-/** Resolve one project (number or name) to a record + source: Endre first, else Firestore. */
 async function resolveProjectRecord(
   query: string,
   deps: AgentDeps,
@@ -68,76 +70,68 @@ async function resolveProjectRecord(
 
 export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
   {
-    name: "get_monthly_capacity",
+    name: "list_sources",
     description:
-      "Tilgjengelig kapasitet per fag per måned fra bemanningsplanen. Bruk for " +
-      "spørsmål om kapasitet per måned eller en periode. Tall er personer per måned.",
-    parameters: {
-      type: "object",
-      properties: {
-        until_month: { type: "string", description: "ISO «YYYY-MM» eller månedsnavn — opp til og med." },
-        from_month: { type: "string", description: "ISO «YYYY-MM» eller månedsnavn — fra og med." },
-        role: { type: "string", enum: ROLE_ENUM },
-      },
-    },
-    async execute(args, deps) {
-      let bound: MonthBound | undefined;
-      const until = parseAnyMonth(String(args.until_month ?? ""));
-      const from = parseAnyMonth(String(args.from_month ?? ""));
-      if (until) bound = { kind: "upTo", month: until.month, year: until.year };
-      else if (from) bound = { kind: "from", month: from.month, year: from.year };
-      const tables = await deps.getStructuredTables();
-      return getMonthlyCapacity.run(
-        { bound, role: asRole(args.role) },
-        {
-          getCapacityRows: async () => capacityRowsFromTables(tables),
-          documentMatches: await deps.searchDocuments("kapasitet bemanningsplan kapasitetsanalyse"),
-        },
-      );
+      "Oversikt over hvilke data som finnes: prosjekter, kontoplan, " +
+      "bemanningsplan-ark og opplastede dokumenter. Kall denne først hvis du er " +
+      "usikker på hva som er tilgjengelig.",
+    parameters: { type: "object", properties: {} },
+    async execute(_args, deps) {
+      const [tables, projects, accounts, docs] = await Promise.all([
+        deps.getStructuredTables(),
+        deps.getProjects(),
+        deps.getAccounts(),
+        deps.listDocuments(),
+      ]);
+      const endre = deps.endreClient ? (await listEndreProjects(deps.endreClient)) ?? [] : [];
+      const projectList = dedupeProjects([
+        ...endre,
+        ...projects.map((p) => ({
+          projectNumber: p.project_number != null ? String(p.project_number) : null,
+          projectName: typeof p.project_name === "string" ? p.project_name : null,
+        })),
+      ]);
+      return {
+        projects: projectList,
+        accountsCount: accounts.length,
+        documents: docs,
+        staffingSheets: tables.map((t) => ({
+          document: t.documentName,
+          sheet: t.sheetName,
+          columns: t.columns,
+          rowCount: t.rows.length,
+        })),
+      };
     },
   },
   {
-    name: "get_available_hours_for_month",
+    name: "get_projects",
     description:
-      "Tilgjengelig kapasitet i TIMER for én måned, estimert som personer × " +
-      `${HOURS_PER_PERSON_MONTH} t/person/mnd (48 t/uke). Bruk når et behov er i ` +
-      "timer og du skal sammenligne. Resultatet er et estimat.",
-    parameters: {
-      type: "object",
-      properties: {
-        month: { type: "string", description: "ISO «YYYY-MM» eller månedsnavn." },
-        role: { type: "string", enum: ROLE_ENUM },
-      },
-      required: ["month"],
-    },
-    async execute(args, deps) {
-      const tables = await deps.getStructuredTables();
-      const avail = readStructuredAvailability(tables);
-      const forMonth = availableHoursForMonth(avail, String(args.month ?? ""));
-      if (!forMonth) {
-        return { found: false, note: "Ingen kapasitetsdata for den måneden." };
-      }
-      const role = asRole(args.role);
-      const byRole = Object.fromEntries(
-        [...forMonth.byRole.entries()].filter(([r]) => !role || r === role),
-      );
-      return {
-        found: true,
-        month: forMonth.monthLabel,
-        unit: "timer",
-        estimate: true,
-        assumption: `personer × ${HOURS_PER_PERSON_MONTH} t/person/mnd`,
-        source: "bemanningsplan / Kapasitetsanalyse",
-        availableHours: byRole,
-      };
+      "Alle prosjekter med feltene som finnes. Lokale prosjekter har fulle " +
+      "nøkkeltall; Endre-prosjekter har bare navn/nummer her (bruk get_project " +
+      "for Endre-beløp). Les og resonner selv — f.eks. for sammenligning eller " +
+      "«høyest X».",
+    parameters: { type: "object", properties: {} },
+    async execute(_args, deps) {
+      const local = (await deps.getProjects()).map((p) => ({
+        source: "firebase" as const,
+        ...stripIds(p),
+      }));
+      const endre = deps.endreClient ? (await listEndreProjects(deps.endreClient)) ?? [] : [];
+      const endreList = endre.map((p) => ({
+        source: "endre" as const,
+        project_number: p.projectNumber,
+        project_name: p.projectName,
+      }));
+      const sources = ["projects", ...(endreList.length > 0 ? ["Endre API: projects"] : [])];
+      return { projects: [...local, ...endreList], sources };
     },
   },
   {
     name: "get_project",
     description:
-      "Hent ett prosjekt (nummer eller navn) med sine felter, fra Endre (live) " +
-      "eller lokal prosjektdata. Les nøkkeltall herfra; finn aldri på felter som " +
-      "ikke finnes (f.eks. kontraktsverdi mangler ofte i Endre).",
+      "Alle felt for ett prosjekt (nummer eller navn), fra Endre (live, inkl. " +
+      "beløpsposter) eller lokal prosjektdata. Les nøkkeltall herfra.",
     parameters: {
       type: "object",
       properties: { project: { type: "string", description: "Prosjektnummer eller -navn." } },
@@ -147,63 +141,62 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
       const found = await resolveProjectRecord(String(args.project ?? ""), deps);
       if (!found) return { found: false };
       const p = toProject(found.record, found.source);
-      return { found: true, projectNumber: p.projectNumber, projectName: p.projectName, source: p.source, fields: p.fields };
+      return {
+        found: true,
+        source: p.source,
+        projectNumber: p.projectNumber,
+        projectName: p.projectName,
+        fields: stripIds(p.fields),
+        sources: [found.source === "endre" ? "Endre API: projects" : "projects"],
+      };
     },
   },
   {
-    name: "compare_projects",
-    description: "Sammenlign flere prosjekter side om side; hvert beholder sin egen kilde og felter.",
-    parameters: {
-      type: "object",
-      properties: { projects: { type: "array", items: { type: "string" }, description: "Prosjektnumre/-navn." } },
-      required: ["projects"],
-    },
-    async execute(args, deps) {
-      const refs = Array.isArray(args.projects) ? args.projects.map(String) : [];
-      const gathered: { record: Record<string, unknown>; source: "endre" | "firebase" }[] = [];
-      const missing: string[] = [];
-      for (const ref of refs) {
-        const found = await resolveProjectRecord(ref, deps);
-        if (found) gathered.push(found);
-        else missing.push(ref);
-      }
-      return compareProjects.run({ projects: gathered, missing }, {});
-    },
-  },
-  {
-    name: "list_projects",
-    description: "List alle prosjekter (Endre + lokale, deduplisert).",
+    name: "get_accounts",
+    description: "Hele kontoplanen (kontonummer + navn + felt). Velg riktig konto selv.",
     parameters: { type: "object", properties: {} },
     async execute(_args, deps) {
-      const local = (await deps.getProjects()).map((d) => ({
-        projectNumber: d.project_number != null ? String(d.project_number) : null,
-        projectName: typeof d.project_name === "string" ? d.project_name : null,
-      }));
-      const endre = deps.endreClient ? (await listEndreProjects(deps.endreClient)) ?? [] : [];
-      return { projects: dedupeProjects([...endre, ...local]) };
+      const accounts = await deps.getAccounts();
+      return {
+        count: accounts.length,
+        truncated: accounts.length > MAX_ACCOUNTS,
+        accounts: accounts.slice(0, MAX_ACCOUNTS).map(stripIds),
+        sources: ["accounts"],
+      };
     },
   },
   {
-    name: "search_chart_of_accounts",
-    description: "Foreslå riktig konto for et innkjøp / søk i kontoplanen.",
+    name: "read_staffing_sheets",
+    description:
+      "Rådata fra bemanningsplanens ark (f.eks. «Kapasitetsanalyse», " +
+      "«Månedsbehov», «Rotasjonsplan»): kolonneoverskrifter + rader. Les og regn " +
+      "selv. Store ark er avkortet — rowCount viser totalen.",
     parameters: {
       type: "object",
-      properties: { query: { type: "string", description: "Hva som kjøpes, f.eks. «arbeidshansker»." } },
-      required: ["query"],
+      properties: { sheet: { type: "string", description: "Begrens til ett ark (delvis navn)." } },
     },
     async execute(args, deps) {
-      const accounts = await deps.getAccounts();
-      const r = await getAccountForPurchase.run({ query: String(args.query ?? "") }, { accounts });
+      let tables = await deps.getStructuredTables();
+      const needle = typeof args.sheet === "string" ? args.sheet.toLowerCase() : null;
+      if (needle) tables = tables.filter((t) => (t.sheetName ?? "").toLowerCase().includes(needle));
       return {
-        coverage: r.coverage,
-        accounts: (r.data ?? []).map((a) => a.account),
-        note: r.note,
+        sources: [...new Set(tables.map((t) => t.documentName))],
+        sheets: tables.map((t) => ({
+          document: t.documentName,
+          sheet: t.sheetName,
+          columns: t.columns,
+          rowCount: t.rows.length,
+          truncated: t.rows.length > MAX_ROWS_PER_SHEET,
+          rows: t.rows.slice(0, MAX_ROWS_PER_SHEET),
+        })),
       };
     },
   },
   {
     name: "search_documents",
-    description: "Søk i opplastede dokumenter (fritekst i PDF/Word/Excel). Kun for dokumentinnhold.",
+    description:
+      "Søk i opplastede dokumenter (fritekst i PDF/Word/Excel). Bruk for " +
+      "dokumentinnhold som ikke er strukturerte tabeller.",
     parameters: {
       type: "object",
       properties: {
@@ -213,11 +206,19 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
       required: ["query"],
     },
     async execute(args, deps) {
-      const matches = await deps.searchDocuments(String(args.query ?? ""));
-      return searchUploadedDocuments.run(
-        { query: String(args.query ?? ""), ...(args.document ? { document: String(args.document) } : {}) },
-        { documentMatches: matches },
-      );
+      let matches = await deps.searchDocuments(String(args.query ?? ""));
+      if (typeof args.document === "string") {
+        const needle = args.document.toLowerCase();
+        matches = matches.filter((m) => m.documentName.toLowerCase().includes(needle));
+      }
+      return {
+        sources: [...new Set(matches.map((m) => m.documentName))],
+        hits: matches.map((m) => ({
+          document: m.documentName,
+          sheet: m.sheetName ?? null,
+          text: m.text,
+        })),
+      };
     },
   },
 ];
