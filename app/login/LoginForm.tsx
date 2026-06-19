@@ -1,10 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function LoginForm({ next }: { next: string }) {
-  const router = useRouter();
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -21,8 +19,9 @@ export default function LoginForm({ next }: { next: string }) {
         body: JSON.stringify({ user, password }),
       });
       if (res.ok) {
-        router.replace(next);
-        router.refresh();
+        // Full sidelasting: garanterer at den nye cookien sendes og at
+        // middleware slipper deg inn. Unngår at knappen henger.
+        window.location.assign(next);
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data?.error || "Innlogging feilet.");

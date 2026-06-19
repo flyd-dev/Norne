@@ -26,10 +26,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // Sett Secure-flagget kun når forespørselen faktisk er HTTPS. Ellers (ren
+  // HTTP på VPS-en) ville nettleseren forkaste cookien, og login ville loope.
+  const proto =
+    req.headers.get("x-forwarded-proto") ||
+    req.nextUrl.protocol.replace(":", "");
+  const isHttps = proto.split(",")[0].trim() === "https";
+
   const res = NextResponse.json({ ok: true });
   res.cookies.set(AUTH_COOKIE, await expectedToken(), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttps,
     sameSite: "lax",
     path: "/",
     maxAge: AUTH_MAX_AGE,
