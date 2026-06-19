@@ -71,8 +71,20 @@ export interface AgentRunResult {
   answer: string;
   /** Tools the agent actually invoked this turn, with success flags. */
   toolRuns: { tool: string; ok: boolean }[];
+  /** Distinct source labels collected from tool results (for citation). */
+  sources: string[];
   /** True when the step budget was hit before a final answer. */
   hitStepLimit: boolean;
+}
+
+/** Pull source label(s) off a tool result: a `sources` array or a `source` string. */
+function collectSources(result: unknown, into: Set<string>): void {
+  if (!result || typeof result !== "object") return;
+  const r = result as { sources?: unknown; source?: unknown };
+  if (Array.isArray(r.sources)) {
+    for (const s of r.sources) if (typeof s === "string" && s) into.add(s);
+  }
+  if (typeof r.source === "string" && r.source) into.add(r.source);
 }
 
 const DEFAULT_MAX_STEPS = 6;
@@ -94,6 +106,7 @@ export async function runAgent<Deps>(
     { role: "user", content: input.userMessage },
   ];
   const toolRuns: { tool: string; ok: boolean }[] = [];
+  const sources = new Set<string>();
 
   for (let i = 0; i < maxSteps; i++) {
     const step = await safeStep(input.model, {
@@ -120,6 +133,7 @@ export async function runAgent<Deps>(
           }
         }
         toolRuns.push({ tool: call.name, ok });
+        if (ok) collectSources(result, sources);
         messages.push({
           role: "tool",
           toolCallId: call.id,
@@ -131,7 +145,12 @@ export async function runAgent<Deps>(
     }
 
     // No tool calls → the model produced (or declined) a final answer.
-    return { answer: step.content?.trim() || NO_ANSWER, toolRuns, hitStepLimit: false };
+    return {
+      answer: step.content?.trim() || NO_ANSWER,
+      toolRuns,
+      sources: [...sources],
+      hitStepLimit: false,
+    };
   }
 
   // Step budget exhausted: ask once more WITHOUT tools to force a final answer.
@@ -143,6 +162,7 @@ export async function runAgent<Deps>(
   return {
     answer: final.content?.trim() || NO_ANSWER,
     toolRuns,
+    sources: [...sources],
     hitStepLimit: true,
   };
 }

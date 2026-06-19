@@ -30,7 +30,8 @@ export type Route =
   | "monthly_capacity"
   | "document_question"
   | "general_qa"
-  | "follow_up";
+  | "follow_up"
+  | "agent";
 
 /** The data sources a route is allowed to read from. */
 export type SourceKind =

@@ -12,6 +12,7 @@
  */
 
 import { runChat, type ChatResult } from "@/lib/chat/orchestrator";
+import { env } from "@/lib/env";
 import type { HistoryMessage } from "@/lib/chat/historyFacts";
 
 export type { ChatResult } from "@/lib/chat/orchestrator";
@@ -21,11 +22,20 @@ export type { HistoryMessage } from "@/lib/chat/historyFacts";
  * Run one assistant turn: the public, stable surface. `history` is the current
  * chat only (the assistant never carries context across chats). Returns the
  * answer plus sources, data-used, warnings, route and diagnostics.
+ *
+ * When ASSISTANT_AGENT_MODE is on, the turn runs through the full agentic
+ * tool-calling loop (the model chooses + chains tools and reasons over results);
+ * otherwise it runs the deterministic pipeline. The agent module is imported
+ * lazily so the deterministic path carries no agent/OpenAI overhead when off.
  */
 export async function runAssistantTurn(
   message: string,
   requestId: string,
   history: HistoryMessage[] = [],
 ): Promise<ChatResult> {
+  if (env.assistant.agentMode()) {
+    const { runAgentTurn } = await import("@/lib/assistant/agent/run");
+    return runAgentTurn(message, requestId, history);
+  }
   return runChat(message, requestId, history);
 }

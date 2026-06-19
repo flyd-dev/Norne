@@ -61,6 +61,12 @@ export const env = {
     // actually fires (only on low-confidence turns).
     llmToolChoice: () =>
       (readOptional("ASSISTANT_LLM_TOOL_CHOICE") ?? "false").toLowerCase() === "true",
+    // Opt-in: route turns through the full agentic tool-calling loop (the model
+    // chooses + chains tools and reasons over results) instead of the
+    // deterministic pipeline. DISABLED by default. Needs a strong reasoning model
+    // (set OPENAI_MODEL accordingly) and the OpenAI provider.
+    agentMode: () =>
+      (readOptional("ASSISTANT_AGENT_MODE") ?? "false").toLowerCase() === "true",
   },
   documents: {
     // Local JSON file holding uploaded-document metadata + chunks. Uploaded
