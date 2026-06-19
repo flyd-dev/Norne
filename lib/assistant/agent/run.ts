@@ -13,7 +13,7 @@ import { runAgent, type AgentMessage } from "@/lib/assistant/agent/loop";
 import { AGENT_TOOLS, type AgentDeps } from "@/lib/assistant/agent/agentTools";
 import { createOpenAIAgentModel } from "@/lib/llm/openaiAgent";
 import { getStructuredTables, listDocuments } from "@/lib/documents/store";
-import { getProjects, getAccounts } from "@/lib/firestore/service";
+import { getProjects, getAccounts, getBudgetLines, getQuantities } from "@/lib/firestore/service";
 import { searchDocuments, MAX_CAPACITY_MATCHES } from "@/lib/rag/documentSearch";
 import { getEndreClient } from "@/lib/endre/client";
 import { logChatPlan } from "@/lib/logger";
@@ -46,6 +46,8 @@ function buildDeps(): AgentDeps {
     getStructuredTables,
     getProjects,
     getAccounts,
+    getBudgetLines,
+    getQuantities,
     listDocuments: async () =>
       (await listDocuments()).map((d) => ({ name: d.name, fileType: d.fileType })),
     searchDocuments: (q: string) => searchDocuments(q, { limit: MAX_CAPACITY_MATCHES }),

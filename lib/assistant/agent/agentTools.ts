@@ -29,6 +29,8 @@ export interface AgentDeps {
   getStructuredTables: () => Promise<StoredStructuredTable[]>;
   getProjects: () => Promise<FirestoreDoc[]>;
   getAccounts: () => Promise<FirestoreDoc[]>;
+  getBudgetLines: (projectId: string) => Promise<Record<string, unknown>[]>;
+  getQuantities: (projectId: string) => Promise<Record<string, unknown>[]>;
   listDocuments: () => Promise<{ name: string; fileType: string }[]>;
   searchDocuments: (query: string) => Promise<DocumentMatch[]>;
   endreClient: EndreClient | null;
@@ -189,6 +191,59 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
           truncated: t.rows.length > MAX_ROWS_PER_SHEET,
           rows: t.rows.slice(0, MAX_ROWS_PER_SHEET),
         })),
+      };
+    },
+  },
+  {
+    name: "get_budget_lines",
+    description:
+      "Budsjettlinjer for et lokalt prosjekt (Firebase). Finnes bare for lokale " +
+      "prosjekter, ikke Endre-prosjekter.",
+    parameters: {
+      type: "object",
+      properties: { project: { type: "string", description: "Prosjektnummer eller -navn." } },
+      required: ["project"],
+    },
+    async execute(args, deps) {
+      const found = await resolveProjectRecord(String(args.project ?? ""), deps);
+      if (!found || found.source !== "firebase") {
+        return { found: false, note: "Budsjettlinjer finnes bare for lokale prosjekter." };
+      }
+      const id = String(found.record.id ?? "");
+      if (!id) return { found: false };
+      const rows = await deps.getBudgetLines(id);
+      return {
+        found: true,
+        count: rows.length,
+        truncated: rows.length > 200,
+        rows: rows.slice(0, 200).map(stripIds),
+        sources: ["budgetLines"],
+      };
+    },
+  },
+  {
+    name: "get_quantities",
+    description:
+      "Mengder for et lokalt prosjekt (Firebase). Finnes bare for lokale prosjekter.",
+    parameters: {
+      type: "object",
+      properties: { project: { type: "string", description: "Prosjektnummer eller -navn." } },
+      required: ["project"],
+    },
+    async execute(args, deps) {
+      const found = await resolveProjectRecord(String(args.project ?? ""), deps);
+      if (!found || found.source !== "firebase") {
+        return { found: false, note: "Mengder finnes bare for lokale prosjekter." };
+      }
+      const id = String(found.record.id ?? "");
+      if (!id) return { found: false };
+      const rows = await deps.getQuantities(id);
+      return {
+        found: true,
+        count: rows.length,
+        truncated: rows.length > 200,
+        rows: rows.slice(0, 200).map(stripIds),
+        sources: ["quantities"],
       };
     },
   },

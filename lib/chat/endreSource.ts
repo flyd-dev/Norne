@@ -28,8 +28,9 @@ import type { FirestoreDoc } from "@/lib/firestore/types";
 
 /** Max projects included when answering a project-list question. */
 const MAX_PROJECTS_LISTED = 50;
-/** Max example rows kept from an amounts/cases/contracts collection. */
-const MAX_SAMPLE_ROWS = 5;
+/** Max rows kept from an amounts/cases/contracts collection. Generous so the
+ * assistant can see individual cases/contracts, not just a tiny sample. */
+const MAX_SAMPLE_ROWS = 100;
 /** Max tag/organization names kept. */
 const MAX_NAMES = 25;
 

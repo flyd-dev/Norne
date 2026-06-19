@@ -47,6 +47,8 @@ function deps(over: Partial<AgentDeps> = {}): AgentDeps {
     getStructuredTables: loadRealTables,
     getProjects: async () => [],
     getAccounts: async () => [],
+    getBudgetLines: async () => [],
+    getQuantities: async () => [],
     listDocuments: async () => [],
     searchDocuments: async () => [],
     endreClient: null,
@@ -98,6 +100,25 @@ describe("generic agent tools", () => {
     expect(r.accounts[0].account_number).toBe("6570");
     expect(r.accounts[0].id).toBeUndefined();
     expect(r.sources).toEqual(["accounts"]);
+  });
+
+  it("get_budget_lines returns local-project budget rows (Firebase)", async () => {
+    const r = (await tool("get_budget_lines").execute({ project: "7100" }, deps({
+      getProjects: async () => [{ id: "F_7100", project_number: "7100", project_name: "Pilestredet" }],
+      getBudgetLines: async () => [{ id: "b1", text: "Betong", amount: 1000 }],
+    }))) as { found: boolean; rows: Record<string, unknown>[]; sources: string[] };
+    expect(r.found).toBe(true);
+    expect(r.rows[0].text).toBe("Betong");
+    expect(r.rows[0].id).toBeUndefined();
+    expect(r.sources).toEqual(["budgetLines"]);
+  });
+
+  it("get_budget_lines declines for an Endre-only project", async () => {
+    const r = (await tool("get_budget_lines").execute({ project: "3025" }, deps({
+      endreClient: endreClient([{ id: "E", project_number: 3025, project_name: "AFBO NORA" }]),
+    }))) as { found: boolean; note?: string };
+    expect(r.found).toBe(false);
+    expect(r.note).toMatch(/lokale prosjekter/i);
   });
 
   it("list_sources orients the model over what exists", async () => {
