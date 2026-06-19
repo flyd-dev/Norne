@@ -896,6 +896,44 @@ body {
   }
 }
 
+/* ---------- Login (full-site password gate) ---------- */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 18px 0 4px;
+  text-align: left;
+}
+
+.login-form input[type="text"],
+.login-form input[type="password"] {
+  width: 100%;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 12px 13px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--panel);
+  color: var(--ink-2);
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.login-submit {
+  width: 100%;
+  padding: 13px 22px;
+  margin-top: 2px;
+}
+
+.login-error {
+  margin: 4px 0 0;
+  text-align: left;
+}
+
 /* ---------- Answer feedback ---------- */
 .feedback {
   margin-top: 12px;

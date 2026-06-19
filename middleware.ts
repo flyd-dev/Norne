@@ -1,51 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AUTH_COOKIE, expectedToken } from "@/lib/site-auth";
 
-// Enkel passordlås for HELE siden (HTTP Basic Auth).
-// Alle med lenken må logge inn med brukernavn + passord før de slipper inn.
-//
-// Brukernavn/passord settes via miljøvariabler i produksjon:
-//   SITE_AUTH_USER, SITE_AUTH_PASSWORD
-// Faller tilbake til standardverdiene under hvis variablene ikke er satt,
-// slik at låsen virker med en gang.
-const USER = process.env.SITE_AUTH_USER || "Admin";
-const PASSWORD = process.env.SITE_AUTH_PASSWORD || "Lyngdal1990";
+// Passordlås for HELE siden. Uten gyldig innloggings-cookie blir du sendt til
+// /login. Selve login-siden, login-API-et og statiske filer er åpne (ellers
+// kan ikke innloggingssiden vises).
+export async function middleware(req: NextRequest): Promise<NextResponse> {
+  const token = req.cookies.get(AUTH_COOKIE)?.value;
+  const expected = await expectedToken();
 
-function unauthorized(): NextResponse {
-  return new NextResponse("Innlogging kreves", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": 'Basic realm="Norne", charset="UTF-8"',
-    },
-  });
-}
-
-export function middleware(req: NextRequest): NextResponse {
-  const header = req.headers.get("authorization");
-
-  if (!header || !header.startsWith("Basic ")) {
-    return unauthorized();
-  }
-
-  // "Basic base64(user:pass)" → dekod og sammenlign.
-  let decoded = "";
-  try {
-    decoded = atob(header.slice("Basic ".length).trim());
-  } catch {
-    return unauthorized();
-  }
-
-  const sep = decoded.indexOf(":");
-  const user = sep === -1 ? decoded : decoded.slice(0, sep);
-  const pass = sep === -1 ? "" : decoded.slice(sep + 1);
-
-  if (user === USER && pass === PASSWORD) {
+  if (token && token === expected) {
     return NextResponse.next();
   }
 
-  return unauthorized();
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  url.searchParams.set("next", req.nextUrl.pathname + req.nextUrl.search);
+  return NextResponse.redirect(url);
 }
 
 export const config = {
-  // Lås alt unntatt Next.js sine egne statiske filer og favicon.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Lås alt unntatt: login-siden, login-API-et, Next.js sine interne filer,
+  // og alle statiske filer (alt som inneholder et punktum, f.eks. logo-png).
+  matcher: ["/((?!login|api/login|_next/static|_next/image|.*\\..*).*)"],
 };
