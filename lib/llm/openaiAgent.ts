@@ -10,6 +10,7 @@
 import "server-only";
 import OpenAI from "openai";
 import { env } from "@/lib/env";
+import { samplingParams } from "@/lib/llm/openaiModel";
 import type {
   AgentMessage,
   AgentModel,
@@ -75,7 +76,7 @@ export function createOpenAIAgentModel(): AgentModel {
     async step({ system, messages, tools }): Promise<AgentStep> {
       const completion = await client.chat.completions.create({
         model,
-        temperature: 0.2,
+        ...samplingParams(model),
         messages: toOpenAIMessages(system, messages),
         ...(tools.length > 0
           ? { tools: toOpenAITools(tools), tool_choice: "auto" as const }

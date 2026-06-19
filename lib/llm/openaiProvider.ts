@@ -5,6 +5,7 @@
 import "server-only";
 import OpenAI from "openai";
 import { env } from "@/lib/env";
+import { samplingParams } from "@/lib/llm/openaiModel";
 import type { GenerateAnswerInput, LLMProvider } from "@/lib/llm/types";
 
 export function createOpenAIProvider(): LLMProvider {
@@ -16,7 +17,7 @@ export function createOpenAIProvider(): LLMProvider {
     async generateAnswer({ systemPrompt, userPrompt }: GenerateAnswerInput) {
       const completion = await client.chat.completions.create({
         model,
-        temperature: 0.2,
+        ...samplingParams(model),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
