@@ -19,7 +19,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Lås alt unntatt: login-siden, login-API-et, Next.js sine interne filer,
-  // og alle statiske filer (alt som inneholder et punktum, f.eks. logo-png).
-  matcher: ["/((?!login|api/login|_next/static|_next/image|.*\\..*).*)"],
+  // Lås alt unntatt: login-siden, login-API-et, admin-API-et (egne bearer-token-
+  // ruter — maskin-endepunkter som brukes av scripts/cron, ikke nettleseren, og
+  // som er beskyttet av ADMIN_UPLOAD_TOKEN uavhengig av cookie-låsen), Next.js
+  // sine interne filer, og alle statiske filer (alt med et punktum, f.eks. png).
+  matcher: [
+    "/((?!login|api/login|api/admin|_next/static|_next/image|.*\\..*).*)",
+  ],
 };
