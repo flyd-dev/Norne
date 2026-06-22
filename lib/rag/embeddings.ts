@@ -49,20 +49,41 @@ async function embedWithOllama(texts: string[]): Promise<number[][]> {
   return data.embeddings.map(normalize);
 }
 
+/** Max attempts when Voyage rate-limits (429) or has a transient 5xx. */
+const VOYAGE_MAX_ATTEMPTS = 6;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function embedWithVoyage(texts: string[]): Promise<number[][]> {
   const baseUrl = env.voyage.baseUrl().replace(/\/+$/, "");
-  const res = await fetch(`${baseUrl}/embeddings`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.voyage.apiKey()}`,
-    },
-    body: JSON.stringify({ model: env.rag.embeddingsModel(), input: texts }),
-  });
-  if (!res.ok) {
-    throw new Error(`Voyage embeddings request failed (HTTP ${res.status}).`);
+  const apiKey = env.voyage.apiKey();
+  const model = env.rag.embeddingsModel();
+
+  let res: Response | undefined;
+  for (let attempt = 1; attempt <= VOYAGE_MAX_ATTEMPTS; attempt++) {
+    res = await fetch(`${baseUrl}/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model, input: texts }),
+    });
+    if (res.ok) break;
+    // Retry on rate limit / transient server errors, honouring Retry-After.
+    const retryable = res.status === 429 || res.status >= 500;
+    if (!retryable || attempt === VOYAGE_MAX_ATTEMPTS) {
+      throw new Error(`Voyage embeddings request failed (HTTP ${res.status}).`);
+    }
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const waitMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(1000 * 2 ** (attempt - 1), 30_000); // 1s,2s,4s,…capped 30s
+    await sleep(waitMs);
   }
-  const data = (await res.json()) as {
+
+  const data = (await res!.json()) as {
     data?: { embedding: number[]; index: number }[];
   };
   if (!Array.isArray(data.data)) {
