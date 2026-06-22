@@ -112,6 +112,48 @@ export async function deltaPage(
   };
 }
 
+/**
+ * Resolve a drive-root-relative folder path (e.g. "General/Kunde/Nornebygg") to
+ * its item id within a drive, or null if it doesn't exist in that drive.
+ */
+export async function resolveFolderId(
+  driveId: string,
+  folderPath: string,
+): Promise<string | null> {
+  const encoded = folderPath
+    .split("/")
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(seg))
+    .join("/");
+  try {
+    const data = await graphGet<{ id: string }>(
+      `/drives/${driveId}/root:/${encoded}`,
+    );
+    return data.id;
+  } catch {
+    return null; // not found in this drive
+  }
+}
+
+/**
+ * Delta feed scoped to a single folder (and its descendants). Same paging
+ * contract as deltaPage — pass the previous link to continue, undefined to start.
+ */
+export async function folderDeltaPage(
+  driveId: string,
+  folderId: string,
+  link?: string,
+): Promise<{ items: GraphDriveItem[]; nextLink?: string; deltaLink?: string }> {
+  const data = await graphGet<GraphDelta>(
+    link ?? `/drives/${driveId}/items/${folderId}/delta`,
+  );
+  return {
+    items: data.value ?? [],
+    nextLink: data["@odata.nextLink"],
+    deltaLink: data["@odata.deltaLink"],
+  };
+}
+
 /** Download a drive item's binary content. */
 export async function downloadItem(
   driveId: string,

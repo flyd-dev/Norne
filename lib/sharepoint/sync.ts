@@ -25,7 +25,9 @@ import { indexDocumentChunks, removeDocumentFromIndex } from "@/lib/rag/indexDoc
 import {
   deltaPage,
   downloadItem,
+  folderDeltaPage,
   listDrives,
+  resolveFolderId,
   resolveSiteId,
 } from "@/lib/sharepoint/graphClient";
 import { readSyncState, writeSyncState } from "@/lib/sharepoint/syncState";
@@ -120,29 +122,69 @@ export async function syncBatch(
     drives = drives.filter((d) => onlyDrives.includes(d.name));
   }
 
+  // A "source" is a delta feed to walk: either a whole drive, or a single folder
+  // within a drive. Each carries its own cursor key in state.cursors.
+  const folderPath = env.sharepoint.folder();
+  const sources: {
+    driveId: string;
+    cursorKey: string;
+    fetch: (
+      link?: string,
+    ) => Promise<{ items: GraphDriveItem[]; nextLink?: string; deltaLink?: string }>;
+  }[] = [];
+
+  if (folderPath) {
+    // Folder mode: find the drive(s) that actually contain the folder and scope
+    // the delta to it — nothing outside the folder is ever enumerated.
+    for (const drive of drives) {
+      const folderId = await resolveFolderId(drive.id, folderPath);
+      if (folderId) {
+        sources.push({
+          driveId: drive.id,
+          cursorKey: `${drive.id}:${folderId}`,
+          fetch: (link) => folderDeltaPage(drive.id, folderId, link),
+        });
+      }
+    }
+    if (sources.length === 0) {
+      throw new Error(
+        `SharePoint folder "${folderPath}" was not found in any synced library ` +
+          `on the site. Check SHAREPOINT_FOLDER (and SHAREPOINT_DRIVES).`,
+      );
+    }
+  } else {
+    for (const drive of drives) {
+      sources.push({
+        driveId: drive.id,
+        cursorKey: drive.id,
+        fetch: (link) => deltaPage(drive.id, link),
+      });
+    }
+  }
+
   let indexed = 0;
   let removed = 0;
   let skipped = 0;
   let morePending = false;
 
-  for (const drive of drives) {
-    let link: string | undefined = state.cursors[drive.id];
-    // Page through this drive until the budget runs out or we reach its
-    // deltaLink (drive complete for now).
+  for (const source of sources) {
+    let link: string | undefined = state.cursors[source.cursorKey];
+    // Page through this source until the budget runs out or we reach its
+    // deltaLink (source complete for now).
     // eslint-disable-next-line no-constant-condition
     while (true) {
       if (budget <= 0) {
         morePending = true;
         break;
       }
-      const page = await deltaPage(drive.id, link);
+      const page = await source.fetch(link);
       for (const item of page.items) {
         if (budget <= 0) {
           morePending = true;
           break;
         }
         try {
-          const outcome = await processItem(drive.id, item, maxBytes);
+          const outcome = await processItem(source.driveId, item, maxBytes);
           if (outcome === "indexed") indexed++;
           else if (outcome === "removed") removed++;
           else if (outcome === "skipped") skipped++;
@@ -161,7 +203,7 @@ export async function syncBatch(
 
       if (page.nextLink) {
         link = page.nextLink;
-        state.cursors[drive.id] = page.nextLink; // resume mid-enumeration
+        state.cursors[source.cursorKey] = page.nextLink; // resume mid-enumeration
         await writeSyncState(state);
         if (budget <= 0) {
           morePending = true;
@@ -169,12 +211,12 @@ export async function syncBatch(
         }
         continue;
       }
-      // No nextLink → deltaLink marks this drive complete for now.
-      if (page.deltaLink) state.cursors[drive.id] = page.deltaLink;
+      // No nextLink → deltaLink marks this source complete for now.
+      if (page.deltaLink) state.cursors[source.cursorKey] = page.deltaLink;
       await writeSyncState(state);
       break;
     }
-    if (budget <= 0) break; // resume remaining drives on the next batch
+    if (budget <= 0) break; // resume remaining sources on the next batch
   }
 
   await writeSyncState(state);
