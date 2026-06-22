@@ -7,6 +7,7 @@
 
 import "server-only";
 import { env } from "@/lib/env";
+import { createAnthropicProvider } from "@/lib/llm/anthropicProvider";
 import { createOpenAIProvider } from "@/lib/llm/openaiProvider";
 import { createOllamaProvider } from "@/lib/llm/ollamaProvider";
 import type { LLMProvider } from "@/lib/llm/types";
@@ -22,6 +23,9 @@ export function getLLMProvider(): LLMProvider {
   if (cached && cachedFor === provider) return cached;
 
   switch (provider) {
+    case "anthropic":
+      cached = createAnthropicProvider();
+      break;
     case "openai":
       cached = createOpenAIProvider();
       break;
@@ -30,7 +34,7 @@ export function getLLMProvider(): LLMProvider {
       break;
     default:
       throw new Error(
-        `Unsupported LLM_PROVIDER "${provider}". Supported: openai, ollama.`,
+        `Unsupported LLM_PROVIDER "${provider}". Supported: anthropic, openai, ollama.`,
       );
   }
   cachedFor = provider;

@@ -6,7 +6,7 @@
  * orchestrator changes.
  */
 
-export const SUPPORTED_LLM_PROVIDERS = ["openai", "ollama"] as const;
+export const SUPPORTED_LLM_PROVIDERS = ["anthropic", "openai", "ollama"] as const;
 export type LlmProvider = (typeof SUPPORTED_LLM_PROVIDERS)[number];
 
 export interface GenerateAnswerInput {

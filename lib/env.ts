@@ -30,13 +30,18 @@ function requireVar(name: string): string {
 
 export const env = {
   llm: {
-    /** Selected provider; defaults to "openai", unknown values fall back to it. */
+    /** Selected provider; defaults to "anthropic", unknown values fall back to it. */
     provider: (): LlmProvider => {
-      const raw = (readOptional("LLM_PROVIDER") ?? "openai").toLowerCase();
+      const raw = (readOptional("LLM_PROVIDER") ?? "anthropic").toLowerCase();
       return (SUPPORTED_LLM_PROVIDERS as readonly string[]).includes(raw)
         ? (raw as LlmProvider)
-        : "openai";
+        : "anthropic";
     },
+  },
+  anthropic: {
+    apiKey: () => requireVar("ANTHROPIC_API_KEY"),
+    // Optional. Defaults to claude-sonnet-4-6 if unset.
+    model: () => readOptional("ANTHROPIC_MODEL") ?? "claude-sonnet-4-6",
   },
   openai: {
     apiKey: () => requireVar("OPENAI_API_KEY"),
@@ -165,7 +170,7 @@ export function validateEnv(): EnvValidation {
   if (!readOptional("FIREBASE_PROJECT_ID")) missing.push("FIREBASE_PROJECT_ID");
 
   // --- LLM provider --------------------------------------------------------
-  const rawProvider = (readOptional("LLM_PROVIDER") ?? "openai").toLowerCase();
+  const rawProvider = (readOptional("LLM_PROVIDER") ?? "anthropic").toLowerCase();
   const providerSupported = (SUPPORTED_LLM_PROVIDERS as readonly string[]).includes(
     rawProvider,
   );
@@ -173,6 +178,10 @@ export function validateEnv(): EnvValidation {
     errors.push(
       `Unsupported LLM_PROVIDER "${rawProvider}". Supported: ${SUPPORTED_LLM_PROVIDERS.join(", ")}.`,
     );
+  } else if (rawProvider === "anthropic") {
+    if (!readOptional("ANTHROPIC_API_KEY")) {
+      missing.push("ANTHROPIC_API_KEY (required when LLM_PROVIDER=anthropic)");
+    }
   } else if (rawProvider === "openai") {
     if (!readOptional("OPENAI_API_KEY")) {
       missing.push("OPENAI_API_KEY (required when LLM_PROVIDER=openai)");

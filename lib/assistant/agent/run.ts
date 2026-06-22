@@ -1,7 +1,8 @@
 /**
- * Agent runtime: wires the agentic loop to the real data sources and the OpenAI
- * model, and shapes the result as a ChatResult so it is a drop-in for the
- * deterministic runChat. Used only when ASSISTANT_AGENT_MODE is on.
+ * Agent runtime: wires the agentic loop to the real data sources and the active
+ * provider's model (Claude by default, OpenAI fallback), and shapes the result
+ * as a ChatResult so it is a drop-in for the deterministic runChat. Used only
+ * when ASSISTANT_AGENT_MODE is on.
  *
  * The tools own the facts (validated, with the persons→hours estimate and
  * contract-value honesty); the model orchestrates and explains. Never throws —
@@ -11,7 +12,9 @@
 import "server-only";
 import { runAgent, type AgentMessage } from "@/lib/assistant/agent/loop";
 import { AGENT_TOOLS, type AgentDeps } from "@/lib/assistant/agent/agentTools";
+import { createAnthropicAgentModel } from "@/lib/llm/anthropicAgent";
 import { createOpenAIAgentModel } from "@/lib/llm/openaiAgent";
+import { env } from "@/lib/env";
 import { getStructuredTables, listDocuments } from "@/lib/documents/store";
 import { getProjects, getAccounts, getBudgetLines, getQuantities } from "@/lib/firestore/service";
 import { searchDocuments, MAX_CAPACITY_MATCHES } from "@/lib/rag/documentSearch";
@@ -56,8 +59,19 @@ function buildDeps(): AgentDeps {
 }
 
 /**
+ * Pick the agent model for the active provider. Claude (Anthropic) is the
+ * default; OpenAI is the fallback. Ollama has no tool-calling agent model, so it
+ * falls back to OpenAI here.
+ */
+function createAgentModel(): AgentModel {
+  return env.llm.provider() === "anthropic"
+    ? createAnthropicAgentModel()
+    : createOpenAIAgentModel();
+}
+
+/**
  * Run one turn through the agent. `modelOverride` lets tests inject a scripted
- * AgentModel instead of the live OpenAI one.
+ * AgentModel instead of the live provider one.
  */
 export async function runAgentTurn(
   message: string,
@@ -65,7 +79,7 @@ export async function runAgentTurn(
   history: HistoryMessage[] = [],
   modelOverride?: AgentModel,
 ): Promise<ChatResult> {
-  const model = modelOverride ?? createOpenAIAgentModel();
+  const model = modelOverride ?? createAgentModel();
   const result = await runAgent({
     model,
     system: AGENT_SYSTEM,

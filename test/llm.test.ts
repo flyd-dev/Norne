@@ -8,6 +8,7 @@ function resetEnv() {
   for (const key of Object.keys(process.env)) {
     if (
       key.startsWith("LLM_") ||
+      key.startsWith("ANTHROPIC_") ||
       key.startsWith("OPENAI_") ||
       key.startsWith("OLLAMA_") ||
       key.startsWith("FIREBASE_")
@@ -27,6 +28,12 @@ afterEach(() => {
 });
 
 describe("getLLMProvider — factory selection", () => {
+  it("selects the Anthropic provider when LLM_PROVIDER=anthropic", () => {
+    process.env.LLM_PROVIDER = "anthropic";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test-dummy";
+    expect(getLLMProvider().name).toBe("anthropic");
+  });
+
   it("selects the OpenAI provider when LLM_PROVIDER=openai", () => {
     process.env.LLM_PROVIDER = "openai";
     process.env.OPENAI_API_KEY = "sk-test-dummy";
@@ -39,9 +46,9 @@ describe("getLLMProvider — factory selection", () => {
     expect(getLLMProvider().name).toBe("ollama");
   });
 
-  it("defaults to OpenAI when LLM_PROVIDER is unset", () => {
-    process.env.OPENAI_API_KEY = "sk-test-dummy";
-    expect(getLLMProvider().name).toBe("openai");
+  it("defaults to Anthropic when LLM_PROVIDER is unset", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test-dummy";
+    expect(getLLMProvider().name).toBe("anthropic");
   });
 });
 
@@ -97,9 +104,21 @@ describe("validateEnv — provider-aware requirements", () => {
     expect(() => validateEnv()).toThrow(/OPENAI_API_KEY/);
   });
 
-  it("rejects an unsupported LLM_PROVIDER", () => {
+  it("requires ANTHROPIC_API_KEY when LLM_PROVIDER=anthropic", () => {
     setFirestoreRest();
     process.env.LLM_PROVIDER = "anthropic";
+    expect(() => validateEnv()).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  it("requires ANTHROPIC_API_KEY by default (provider unset)", () => {
+    setFirestoreRest();
+    // No LLM_PROVIDER set: defaults to anthropic.
+    expect(() => validateEnv()).toThrow(/ANTHROPIC_API_KEY/);
+  });
+
+  it("rejects an unsupported LLM_PROVIDER", () => {
+    setFirestoreRest();
+    process.env.LLM_PROVIDER = "gemini";
     expect(() => validateEnv()).toThrow(/Unsupported LLM_PROVIDER/);
   });
 

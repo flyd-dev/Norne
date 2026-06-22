@@ -21,6 +21,8 @@ function postRequest(body: unknown, raw = false) {
 beforeEach(() => {
   vi.clearAllMocks();
   // Valid REST-mode config so validateEnv passes for the non-validation tests.
+  // Anthropic is the default provider, so its key must be present.
+  process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
   process.env.OPENAI_API_KEY = "test-openai-key";
   process.env.FIREBASE_PROJECT_ID = "test-project";
   process.env.FIREBASE_API_KEY = "test-api-key";
