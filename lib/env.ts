@@ -54,6 +54,13 @@ export const env = {
     // (e.g. a reverse proxy on a remote VPS). Local Ollama usually has no auth.
     apiKey: () => readOptional("OLLAMA_API_KEY"),
   },
+  voyage: {
+    // Voyage AI — Anthropic's recommended embeddings provider (Anthropic has no
+    // embeddings API of its own). Generous free tier; hosted, nothing to install.
+    apiKey: () => requireVar("VOYAGE_API_KEY"),
+    baseUrl: () =>
+      readOptional("VOYAGE_BASE_URL") ?? "https://api.voyageai.com/v1",
+  },
   admin: {
     // Token gating the document-upload admin routes. Optional: if unset, the
     // admin routes are disabled (not the chatbot). Never sent to the browser.
@@ -80,12 +87,73 @@ export const env = {
       readOptional("DOCUMENT_STORE_PATH") ??
       "/var/lib/norne-chatbot/knowledge-documents.json",
   },
+  rag: {
+    // Local SQLite (sqlite-vec) file holding chunk embeddings for semantic
+    // search. Scales far past the in-memory JSON keyword index — used for large
+    // corpora (e.g. a synced SharePoint library). Sibling of the JSON store by
+    // default. NOT in Firestore.
+    vectorStorePath: () =>
+      readOptional("VECTOR_STORE_PATH") ??
+      "/var/lib/norne-chatbot/vectors.db",
+    // Which embeddings backend to use. "voyage" (Anthropic's recommended
+    // provider; hosted, free tier), "ollama" (free + local), "openai" (cheap
+    // hosted), or "none" (disable semantic search; keyword index only).
+    embeddingsProvider: (): "voyage" | "ollama" | "openai" | "none" => {
+      const raw = (readOptional("EMBEDDINGS_PROVIDER") ?? "ollama").toLowerCase();
+      return raw === "voyage" || raw === "openai" || raw === "none"
+        ? raw
+        : "ollama";
+    },
+    // Embedding model. Defaults per provider: voyage-3.5 (Voyage) /
+    // nomic-embed-text (Ollama) / text-embedding-3-small (OpenAI).
+    embeddingsModel: (): string => {
+      const explicit = readOptional("EMBEDDINGS_MODEL");
+      if (explicit) return explicit;
+      switch (env.rag.embeddingsProvider()) {
+        case "voyage":
+          return "voyage-3.5";
+        case "openai":
+          return "text-embedding-3-small";
+        default:
+          return "nomic-embed-text";
+      }
+    },
+  },
   feedback: {
     // Local JSON file holding answer feedback (thumbs up/down + corrections).
     // Never stores secrets, full chat history, or uploaded document contents.
     storePath: () =>
       readOptional("DOCUMENT_FEEDBACK_PATH") ??
       "/var/lib/norne-chatbot/feedback.json",
+  },
+  sharepoint: {
+    // Optional integration: sync a SharePoint document library into the
+    // knowledge base via Microsoft Graph (app-only / client credentials).
+    // DISABLED by default; the app never requires these at startup. Read-only.
+    enabledFlag: () =>
+      (readOptional("SHAREPOINT_ENABLED") ?? "false").toLowerCase() === "true",
+    // Entra ID (Azure AD) tenant + app registration. The app registration needs
+    // application permission Sites.Read.All (+ Files.Read.All), admin-consented.
+    tenantId: () => readOptional("SHAREPOINT_TENANT_ID"),
+    clientId: () => readOptional("SHAREPOINT_CLIENT_ID"),
+    clientSecret: () => readOptional("SHAREPOINT_CLIENT_SECRET"),
+    // The site to sync, as "{hostname}:/sites/{path}" (e.g.
+    // "flyd.sharepoint.com:/sites/Dokumenter"). Resolved to a site id at runtime.
+    site: () => readOptional("SHAREPOINT_SITE"),
+    // Optional: restrict to specific document libraries (drive names), comma-
+    // separated. Empty = sync every document library on the site.
+    driveNames: (): string[] =>
+      (readOptional("SHAREPOINT_DRIVES") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    // Max file size to download/index (MB). Larger files are skipped. Default 25.
+    maxFileMb: () => Number.parseInt(readOptional("SHAREPOINT_MAX_FILE_MB") ?? "25", 10),
+    // Where per-drive delta cursors are persisted (local JSON), so syncs are
+    // incremental. Optional; defaults next to the other state files.
+    statePath: () =>
+      readOptional("SHAREPOINT_STATE_PATH") ??
+      "/var/lib/norne-chatbot/sharepoint-sync.json",
   },
   endre: {
     // Optional external integration with the Endre public REST API. DISABLED by
@@ -130,6 +198,21 @@ export function endreConfigured(): boolean {
  */
 export function endreReady(): boolean {
   return env.endre.enabledFlag() && endreConfigured();
+}
+
+/** True when all required SharePoint credentials are present. */
+export function sharepointConfigured(): boolean {
+  return Boolean(
+    env.sharepoint.tenantId() &&
+      env.sharepoint.clientId() &&
+      env.sharepoint.clientSecret() &&
+      env.sharepoint.site(),
+  );
+}
+
+/** True when the SharePoint sync may run: flag on AND credentials present. */
+export function sharepointReady(): boolean {
+  return env.sharepoint.enabledFlag() && sharepointConfigured();
 }
 
 export type FirestoreMode = "admin" | "rest";

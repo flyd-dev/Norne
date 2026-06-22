@@ -1,17 +1,26 @@
 /**
- * Document search / RAG — keyword (term-frequency) search over stored chunks.
+ * Document search / RAG.
  *
- * MVP implementation: loads stored chunks and ranks them by how often the query
- * terms appear, plus configurable boosts (document-name, sheet-name and specific
- * terms) and an optional exclude list. This is modular — the public
- * `searchDocuments(query, ...)` signature is what the orchestrator depends on, so
- * it can later be swapped for embeddings/vector search without touching the
- * orchestrator.
+ * Two backends behind one stable `searchDocuments(query, ...)` signature (what
+ * the orchestrator depends on):
+ *
+ *   - Semantic (default when EMBEDDINGS_PROVIDER ≠ "none" and the sqlite-vec
+ *     index is populated): embeds the query and runs a KNN search over chunk
+ *     embeddings. Scales to large corpora (e.g. a synced SharePoint library).
+ *   - Keyword (fallback): term-frequency ranking over the in-memory JSON chunk
+ *     store. Used when embeddings are disabled, the vector index is empty, or the
+ *     embedding call fails — so chat never hard-fails on a retrieval hiccup.
+ *
+ * The same metadata boosts/excludes (document-name, sheet-name, terms) are
+ * applied on top of BOTH backends, so capacity-question tuning is preserved.
  */
 
 import "server-only";
 import { getAllChunks } from "@/lib/documents/store";
 import type { StoredChunk } from "@/lib/documents/types";
+import { embedQuery, embeddingsEnabled } from "@/lib/rag/embeddings";
+import { searchVectors, vectorCount } from "@/lib/rag/vectorStore";
+import { errorTypeOf } from "@/lib/logger";
 
 export interface DocumentMatch extends StoredChunk {
   /** Relevance score (higher = more relevant). */
@@ -59,63 +68,140 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-/**
- * Search uploaded documents for chunks relevant to `query`.
- *
- * Backwards compatible: the second argument may be a plain `limit` number, or a
- * `SearchOptions` object for boosts/excludes used by capacity questions.
- * Returns up to `limit` matches, highest score first.
- */
-export async function searchDocuments(
-  query: string,
-  limitOrOptions: number | SearchOptions = MAX_DOCUMENT_MATCHES,
-): Promise<DocumentMatch[]> {
-  const options: SearchOptions =
-    typeof limitOrOptions === "number"
-      ? { limit: limitOrOptions }
-      : limitOrOptions;
-  const limit = options.limit ?? MAX_DOCUMENT_MATCHES;
-  const boostDocNames = (options.boostDocumentNames ?? []).map((s) =>
-    s.toLowerCase(),
-  );
-  const boostSheets = (options.boostSheetNames ?? []).map((s) => s.toLowerCase());
-  const boostTerms = (options.boostTerms ?? []).map((s) => s.toLowerCase());
-  const excludeDocNames = (options.excludeDocumentNames ?? []).map((s) =>
-    s.toLowerCase(),
-  );
+interface NormalizedOptions {
+  limit: number;
+  boostDocNames: string[];
+  boostSheets: string[];
+  boostTerms: string[];
+  excludeDocNames: string[];
+}
 
+function normalizeOptions(
+  limitOrOptions: number | SearchOptions,
+): NormalizedOptions {
+  const options: SearchOptions =
+    typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
+  return {
+    limit: options.limit ?? MAX_DOCUMENT_MATCHES,
+    boostDocNames: (options.boostDocumentNames ?? []).map((s) => s.toLowerCase()),
+    boostSheets: (options.boostSheetNames ?? []).map((s) => s.toLowerCase()),
+    boostTerms: (options.boostTerms ?? []).map((s) => s.toLowerCase()),
+    excludeDocNames: (options.excludeDocumentNames ?? []).map((s) =>
+      s.toLowerCase(),
+    ),
+  };
+}
+
+/** Additive metadata boost shared by both backends; returns 0 when excluded. */
+function metadataBoost(
+  chunk: StoredChunk,
+  opts: NormalizedOptions,
+): number | null {
+  const name = chunk.documentName.toLowerCase();
+  if (opts.excludeDocNames.some((ex) => name.includes(ex))) return null;
+  const sheet = (chunk.sheetName ?? "").toLowerCase();
+  const text = chunk.text.toLowerCase();
+  let boost = 0;
+  if (opts.boostDocNames.some((b) => name.includes(b))) boost += 8;
+  if (opts.boostSheets.some((b) => sheet.includes(b))) boost += 6;
+  for (const term of opts.boostTerms) {
+    if (text.includes(term)) boost += 3;
+  }
+  return boost;
+}
+
+/** Keyword (term-frequency) ranking over the in-memory JSON chunk store. */
+async function keywordSearch(
+  query: string,
+  opts: NormalizedOptions,
+): Promise<DocumentMatch[]> {
   const queryTerms = terms(query);
-  if (queryTerms.length === 0 && boostTerms.length === 0) return [];
+  if (queryTerms.length === 0 && opts.boostTerms.length === 0) return [];
 
   const chunks = await getAllChunks();
   if (chunks.length === 0) return [];
 
   const scored: DocumentMatch[] = [];
   for (const chunk of chunks) {
+    const boost = metadataBoost(chunk, opts);
+    if (boost === null) continue; // excluded
     const name = chunk.documentName.toLowerCase();
-    if (excludeDocNames.some((ex) => name.includes(ex))) continue;
-
     const text = chunk.text.toLowerCase();
-    const sheet = (chunk.sheetName ?? "").toLowerCase();
-    let score = 0;
-
+    let score = boost;
     for (const term of queryTerms) {
       score += countOccurrences(text, term);
       if (name.includes(term)) score += 2; // boost document-name matches
     }
-
-    // Boost chunks from a named staffing-plan document.
-    if (boostDocNames.some((b) => name.includes(b))) score += 8;
-    // Boost chunks from a relevant sheet (Rotasjonsplan, Bemanning, Kapasitet…).
-    if (boostSheets.some((b) => sheet.includes(b))) score += 6;
-    // Boost chunks that actually mention the roles/months we care about.
-    for (const term of boostTerms) {
-      if (text.includes(term)) score += 3;
-    }
-
     if (score > 0) scored.push({ ...chunk, score });
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit);
+  return scored.slice(0, opts.limit);
+}
+
+/** Semantic (embedding KNN) search over the sqlite-vec index. */
+async function semanticSearch(
+  query: string,
+  opts: NormalizedOptions,
+): Promise<DocumentMatch[]> {
+  const queryVec = await embedQuery(query);
+  // Over-fetch so metadata boosts/excludes can re-rank a wider candidate set.
+  const candidates = searchVectors(queryVec, Math.max(opts.limit * 4, 24));
+
+  const scored: DocumentMatch[] = [];
+  for (const c of candidates) {
+    const boost = metadataBoost(c, opts);
+    if (boost === null) continue; // excluded
+    // Map cosine similarity [-1,1] onto a 0–10 scale comparable to the additive
+    // boosts, so hybrid ranking stays coherent.
+    const score = c.similarity * 10 + boost;
+    scored.push({
+      documentId: c.documentId,
+      documentName: c.documentName,
+      fileType: c.fileType,
+      sheetName: c.sheetName,
+      chunkIndex: c.chunkIndex,
+      text: c.text,
+      score,
+    });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, opts.limit);
+}
+
+/**
+ * Search uploaded documents for chunks relevant to `query`.
+ *
+ * Backwards compatible: the second argument may be a plain `limit` number, or a
+ * `SearchOptions` object for boosts/excludes used by capacity questions.
+ * Returns up to `limit` matches, highest score first.
+ *
+ * Uses semantic search when available, falling back to keyword search.
+ */
+export async function searchDocuments(
+  query: string,
+  limitOrOptions: number | SearchOptions = MAX_DOCUMENT_MATCHES,
+): Promise<DocumentMatch[]> {
+  const opts = normalizeOptions(limitOrOptions);
+
+  if (embeddingsEnabled()) {
+    try {
+      if (vectorCount() > 0) {
+        const results = await semanticSearch(query, opts);
+        if (results.length > 0) return results;
+      }
+    } catch (error) {
+      // Never hard-fail chat on a retrieval hiccup (e.g. Ollama down) — log the
+      // error type only and fall back to keyword search.
+      console.error(
+        JSON.stringify({
+          evt: "semantic_search_failed_fallback_keyword",
+          errorType: errorTypeOf(error),
+        }),
+      );
+    }
+  }
+
+  return keywordSearch(query, opts);
 }

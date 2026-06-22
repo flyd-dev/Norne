@@ -22,7 +22,8 @@ import {
   ExtractionError,
   UnsupportedFileTypeError,
 } from "@/lib/documents/types";
-import { logAdminError, newRequestId } from "@/lib/logger";
+import { indexDocumentChunks } from "@/lib/rag/indexDocument";
+import { errorTypeOf, logAdminError, newRequestId } from "@/lib/logger";
 
 const FS_PERMISSION_MESSAGE =
   "Kan ikke lese/skrive dokumentlageret på serveren. Sjekk at " +
@@ -141,6 +142,18 @@ export async function POST(request: Request) {
       chunks,
       content.structured,
     );
+
+    // Populate the semantic index too (best-effort: a failure here — e.g. the
+    // embeddings backend being down — must not fail an otherwise-good upload,
+    // since keyword search still works from the JSON store).
+    try {
+      await indexDocumentChunks(documentId, chunks);
+    } catch (error) {
+      logAdminError(requestId, "index", error);
+      console.error(
+        JSON.stringify({ evt: "index_failed", errorType: errorTypeOf(error) }),
+      );
+    }
 
     return NextResponse.json(
       {

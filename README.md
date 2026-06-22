@@ -15,7 +15,8 @@ reach the browser.
 - **Next.js (App Router)** + **TypeScript**
 - **Firebase Admin SDK** (preferred) or **Firestore REST API** (fallback)
 - **Pluggable LLM provider**: **OpenAI** or **Ollama** (local Llama)
-- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → keyword search (RAG-ready), stored in a local JSON file (not Firestore)
+- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → hybrid retrieval (semantic vector search via embeddings, with keyword fallback), stored in a local JSON file + a local `sqlite-vec` index (not Firestore)
+- **SharePoint sync** (optional): pull a SharePoint document library into the knowledge base via Microsoft Graph (app-only auth), resumable + incremental
 - Server-side route at **`/api/chat`** + admin routes at **`/api/admin/documents`**
 - Simple React chat UI + protected admin upload page at **`/admin/documents`**
 
@@ -66,13 +67,22 @@ lib/
     chunk.ts             text chunking (size + overlap) + metadata
     store.ts             local JSON-file persistence (DOCUMENT_STORE_PATH)
   rag/
-    documentSearch.ts    keyword search over stored chunks (vector-search ready)
+    documentSearch.ts    hybrid search: semantic (vector) + keyword fallback
+    embeddings.ts        pluggable embeddings (Ollama / OpenAI / none)
+    vectorStore.ts       sqlite-vec persistence for chunk embeddings (KNN)
+    indexDocument.ts     embed + upsert chunks; backfill (shared by upload+sync)
+  sharepoint/
+    graphClient.ts       Microsoft Graph (app-only auth, drives, delta, download)
+    sync.ts              resumable/incremental sync → extract → index
+    syncState.ts         per-drive delta cursors (local JSON)
+    types.ts             Graph + sync types
   admin/
     auth.ts              bearer-token check for admin routes
   llm/                   pluggable LLM providers (OpenAI / Ollama)
 app/
   admin/documents/       protected upload UI
-  api/admin/documents/   upload (POST), list (GET), delete (DELETE)
+  api/admin/documents/   upload (POST), list (GET), delete (DELETE), reindex (POST)
+  api/admin/sharepoint/  sync (POST, resumable batch)
 components/
   AdminDocuments.tsx     admin upload/list/delete UI
 test/
@@ -81,8 +91,24 @@ test/
 ```
 
 The orchestrator depends only on the `LLMProvider` interface (swap via
-`LLM_PROVIDER`) and on `searchDocuments(query)` (swap keyword search for vector
-search later) — neither requires orchestrator changes.
+`LLM_PROVIDER`) and on `searchDocuments(query)` — which now runs semantic vector
+search (sqlite-vec) when embeddings are configured and the index is populated,
+falling back to keyword search otherwise. Neither requires orchestrator changes.
+
+### Semantic search & SharePoint sync
+
+- **Embeddings** are pluggable via `EMBEDDINGS_PROVIDER`. Anthropic/Claude has no
+  embeddings API, so this is a separate provider (Claude still writes the
+  answers): `voyage` (Anthropic's recommended provider — hosted, free tier),
+  `ollama` (free + local), `openai`, or `none`. Vectors live in a local
+  `sqlite-vec` file (`VECTOR_STORE_PATH`). Uploads auto-index; backfill existing
+  docs with `node scripts/reindex-documents.mjs`.
+- **SharePoint sync** (set `SHAREPOINT_ENABLED=true` + `SHAREPOINT_*`) pulls a
+  document library via Microsoft Graph. It is resumable and incremental (per-drive
+  delta cursors), so a large library loads over several batches and later runs
+  only pick up changes. Drive it with `node scripts/sync-sharepoint.mjs`. No paid
+  Azure subscription — the app registration lives in Entra ID, included with the
+  Microsoft 365 tenant that hosts SharePoint.
 
 ---
 

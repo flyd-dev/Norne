@@ -7,7 +7,8 @@
 import { NextResponse } from "next/server";
 import { adminConfigured, isAdminAuthorized } from "@/lib/admin/auth";
 import { deleteDocument, isFilesystemPermissionError } from "@/lib/documents/store";
-import { logAdminError, newRequestId } from "@/lib/logger";
+import { removeDocumentFromIndex } from "@/lib/rag/indexDocument";
+import { errorTypeOf, logAdminError, newRequestId } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,17 @@ export async function DELETE(
   const requestId = newRequestId();
   try {
     await deleteDocument(id);
+    // Best-effort: also drop the document's vectors from the semantic index.
+    try {
+      removeDocumentFromIndex(id);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          evt: "index_delete_failed",
+          errorType: errorTypeOf(error),
+        }),
+      );
+    }
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
     logAdminError(requestId, "delete", error);
