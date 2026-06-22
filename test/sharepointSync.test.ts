@@ -15,6 +15,9 @@ vi.mock("@/lib/sharepoint/graphClient", () => ({
   resolveSiteId: async () => "site-1",
   listDrives: async () => [{ id: "drive-1", name: "Docs" }],
   deltaPage: async () => graph.pages[graph.calls++],
+  folderDeltaPage: async () => graph.pages[graph.calls++],
+  resolveFolderId: async (_driveId: string, path: string) =>
+    path === "General/Kunde/Nornebygg" ? "folder-1" : null,
   downloadItem: async () => Buffer.from("hello world"),
 }));
 
@@ -73,6 +76,7 @@ beforeEach(() => {
   process.env.SHAREPOINT_CLIENT_SECRET = "s";
   process.env.SHAREPOINT_SITE = "host:/sites/Docs";
   delete process.env.SHAREPOINT_DRIVES;
+  delete process.env.SHAREPOINT_FOLDER;
 });
 
 describe("syncBatch", () => {
@@ -134,5 +138,22 @@ describe("syncBatch", () => {
   it("throws when not configured", async () => {
     process.env.SHAREPOINT_ENABLED = "false";
     await expect(syncBatch()).rejects.toThrow(/not configured/i);
+  });
+
+  it("folder mode: scopes the delta to the configured folder", async () => {
+    process.env.SHAREPOINT_FOLDER = "General/Kunde/Nornebygg";
+    graph.pages = [
+      { items: [file("1", "a.txt"), file("2", "b.pdf")], deltaLink: "DELTA" },
+    ];
+    const r = await syncBatch({ maxFiles: 50 });
+    expect(r.indexed).toBe(2);
+    expect(r.done).toBe(true);
+    // Cursor stored under the composite drive:folder key.
+    expect(stateStore.state.cursors["drive-1:folder-1"]).toBe("DELTA");
+  });
+
+  it("folder mode: throws when the folder is not found in any drive", async () => {
+    process.env.SHAREPOINT_FOLDER = "Finnes/Ikke";
+    await expect(syncBatch({ maxFiles: 50 })).rejects.toThrow(/not found/i);
   });
 });

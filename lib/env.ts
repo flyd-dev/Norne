@@ -147,6 +147,11 @@ export const env = {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
+    // Optional: restrict to a single folder (and its descendants) within the
+    // library, as a drive-root-relative path, e.g. "General/Kunde/Nornebygg".
+    // Empty = sync the whole library. Use this to avoid indexing unrelated
+    // folders (e.g. other clients' documents) into the shared knowledge base.
+    folder: () => readOptional("SHAREPOINT_FOLDER"),
     // Max file size to download/index (MB). Larger files are skipped. Default 25.
     maxFileMb: () => Number.parseInt(readOptional("SHAREPOINT_MAX_FILE_MB") ?? "25", 10),
     // Where per-drive delta cursors are persisted (local JSON), so syncs are
