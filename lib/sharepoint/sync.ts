@@ -42,32 +42,47 @@ function docIdFor(driveId: string, itemId: string): string {
   return `sp:${driveId}:${itemId}`;
 }
 
-type ItemOutcome = "indexed" | "removed" | "skipped" | "folder";
+/** Why a file was skipped — surfaced so the operator can judge if OCR is worth it. */
+export type SkipReason = "unsupported" | "too_large" | "no_text" | "error";
+
+type ItemResult =
+  | { outcome: "indexed" | "removed" | "folder" }
+  | { outcome: "skipped"; reason: SkipReason };
+
+/** Log a skipped file (name + reason) so the operator can review the skips. */
+function logSkip(name: string, reason: SkipReason): void {
+  console.log(
+    JSON.stringify({ evt: "sharepoint_skipped", reason, name }),
+  );
+}
 
 async function processItem(
   driveId: string,
   item: GraphDriveItem,
   maxBytes: number,
-): Promise<ItemOutcome> {
+): Promise<ItemResult> {
   const documentId = docIdFor(driveId, item.id);
 
   // Tombstone: the item was deleted/moved out — drop it from both stores.
   if (item.deleted) {
     await deleteDocument(documentId).catch(() => undefined);
     removeDocumentFromIndex(documentId);
-    return "removed";
+    return { outcome: "removed" };
   }
   // Delta is a flat recursive feed; folders carry no content.
-  if (item.folder || !item.file) return "folder";
+  if (item.folder || !item.file) return { outcome: "folder" };
 
   const name = item.name ?? "";
-  let fileType;
   try {
-    fileType = fileTypeFromName(name);
+    fileTypeFromName(name);
   } catch {
-    return "skipped"; // unsupported extension
+    logSkip(name, "unsupported");
+    return { outcome: "skipped", reason: "unsupported" }; // e.g. image, pptx, zip
   }
-  if (typeof item.size === "number" && item.size > maxBytes) return "skipped";
+  if (typeof item.size === "number" && item.size > maxBytes) {
+    logSkip(name, "too_large");
+    return { outcome: "skipped", reason: "too_large" };
+  }
 
   const buffer = await downloadItem(driveId, item.id);
   const uploadedAt = item.lastModifiedDateTime ?? new Date().toISOString();
@@ -78,20 +93,26 @@ async function processItem(
       documentName: name,
       uploadedAt,
     });
-    if (chunks.length === 0) return "skipped";
+    if (chunks.length === 0) {
+      // Parsed but yielded no text — typically a scanned PDF/image: OCR candidate.
+      logSkip(name, "no_text");
+      return { outcome: "skipped", reason: "no_text" };
+    }
     await saveDocument(
       { id: documentId, name, fileType: content.fileType, uploadedAt },
       chunks,
       content.structured,
     );
     await indexDocumentChunks(documentId, chunks);
-    return "indexed";
+    return { outcome: "indexed" };
   } catch (error) {
     if (
       error instanceof ExtractionError ||
       error instanceof UnsupportedFileTypeError
     ) {
-      return "skipped"; // unreadable file — skip, don't abort the batch
+      // No extractable text (e.g. scanned PDF with no text layer) — OCR candidate.
+      logSkip(name, "no_text");
+      return { outcome: "skipped", reason: "no_text" };
     }
     throw error;
   }
@@ -165,6 +186,12 @@ export async function syncBatch(
   let indexed = 0;
   let removed = 0;
   let skipped = 0;
+  const skippedReasons: Record<SkipReason, number> = {
+    unsupported: 0,
+    too_large: 0,
+    no_text: 0,
+    error: 0,
+  };
   let morePending = false;
 
   for (const source of sources) {
@@ -184,13 +211,17 @@ export async function syncBatch(
           break;
         }
         try {
-          const outcome = await processItem(source.driveId, item, maxBytes);
-          if (outcome === "indexed") indexed++;
-          else if (outcome === "removed") removed++;
-          else if (outcome === "skipped") skipped++;
-          if (outcome !== "folder") budget--;
+          const result = await processItem(source.driveId, item, maxBytes);
+          if (result.outcome === "indexed") indexed++;
+          else if (result.outcome === "removed") removed++;
+          else if (result.outcome === "skipped") {
+            skipped++;
+            skippedReasons[result.reason]++;
+          }
+          if (result.outcome !== "folder") budget--;
         } catch (error) {
           skipped++;
+          skippedReasons.error++;
           budget--;
           console.error(
             JSON.stringify({
@@ -220,5 +251,5 @@ export async function syncBatch(
   }
 
   await writeSyncState(state);
-  return { indexed, removed, skipped, done: !morePending };
+  return { indexed, removed, skipped, skippedReasons, done: !morePending };
 }

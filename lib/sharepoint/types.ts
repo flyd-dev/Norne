@@ -43,6 +43,13 @@ export interface SyncBatchResult {
   removed: number;
   /** Files skipped (unsupported type, too large, or empty). */
   skipped: number;
+  /** Breakdown of why files were skipped — `no_text` flags OCR candidates. */
+  skippedReasons: {
+    unsupported: number;
+    too_large: number;
+    no_text: number;
+    error: number;
+  };
   /** True when every drive has been fully enumerated (no more nextLinks). */
   done: boolean;
 }

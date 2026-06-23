@@ -120,6 +120,8 @@ describe("syncBatch", () => {
     const r = await syncBatch({ maxFiles: 50 });
     expect(r.indexed).toBe(1);
     expect(r.skipped).toBe(2);
+    expect(r.skippedReasons.unsupported).toBe(1);
+    expect(r.skippedReasons.too_large).toBe(1);
   });
 
   it("removes documents for deleted tombstones", async () => {

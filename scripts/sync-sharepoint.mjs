@@ -25,6 +25,7 @@ if (!TOKEN) {
 }
 
 let totals = { indexed: 0, removed: 0, skipped: 0 };
+const skipTotals = { unsupported: 0, too_large: 0, no_text: 0, error: 0 };
 let batch = 0;
 
 for (;;) {
@@ -45,6 +46,9 @@ for (;;) {
   totals.indexed += body.indexed ?? 0;
   totals.removed += body.removed ?? 0;
   totals.skipped += body.skipped ?? 0;
+  for (const k of Object.keys(skipTotals)) {
+    skipTotals[k] += body.skippedReasons?.[k] ?? 0;
+  }
   console.log(
     `batch ${batch}: +${body.indexed} indexed, ${body.removed} removed, ` +
       `${body.skipped} skipped` + (body.done ? " (done)" : ""),
@@ -55,3 +59,15 @@ for (;;) {
 console.log(
   `Done. Total: ${totals.indexed} indexed, ${totals.removed} removed, ${totals.skipped} skipped.`,
 );
+console.log(
+  `Skipped breakdown: ${skipTotals.unsupported} unsupported, ` +
+    `${skipTotals.too_large} too large, ${skipTotals.no_text} no text (OCR candidates), ` +
+    `${skipTotals.error} errors.`,
+);
+if (skipTotals.no_text > 0) {
+  console.log(
+    `\n${skipTotals.no_text} file(s) had no extractable text (likely scanned PDFs).\n` +
+      `See their names on the server with:\n` +
+      `  grep sharepoint_skipped /root/.pm2/logs/norne-chatbot-out-0.log | grep no_text`,
+  );
+}
