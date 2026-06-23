@@ -103,6 +103,52 @@ export async function POST(request: Request) {
     return clientError("Tjenesten er ikke riktig konfigurert.", 500, requestId);
   }
 
+  // --- Streaming branch (opt-in via { stream: true }) -----------------------
+  // The browser client asks for a stream; scripts/curl omit it and get the same
+  // JSON as before (backward compatible). The stream is newline-delimited JSON:
+  //   {"type":"token","text":"…"}      zero or more, as the answer is written
+  //   {"type":"done", …ChatResult…}    once, with the full answer + sources
+  //   {"type":"error","error":"…"}     on failure
+  const wantsStream = (body as { stream?: unknown })?.stream === true;
+  if (wantsStream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (obj: unknown) =>
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        try {
+          const result = await runAssistantTurn(message.trim(), requestId, history, {
+            onToken: (chunk) => send({ type: "token", text: chunk }),
+          });
+          send({
+            type: "done",
+            answer: result.answer,
+            sources: result.sources,
+            dataUsed: result.dataUsed,
+            warnings: result.warnings,
+            route: result.route,
+          });
+        } catch (error) {
+          logChatError(requestId, errorTypeOf(error));
+          send({
+            type: "error",
+            error: "Noe gikk galt under behandlingen av forespørselen.",
+            requestId,
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+      },
+    });
+  }
+
   // --- Run the assistant turn (runner is the public entry) ------------------
   try {
     const result = await runAssistantTurn(message.trim(), requestId, history);

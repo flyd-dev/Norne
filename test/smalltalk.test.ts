@@ -3,6 +3,7 @@ import {
   isSmalltalkMessage,
   mentionsCompanyDomain,
   isCapabilitiesQuestion,
+  isWriteRequest,
 } from "@/lib/chat/capabilities";
 
 describe("isSmalltalkMessage", () => {
@@ -49,6 +50,32 @@ describe("mentionsCompanyDomain (high recall)", () => {
       "hvordan har du det?",
     ]) {
       expect(mentionsCompanyDomain(m)).toBe(false);
+    }
+  });
+});
+
+describe("isWriteRequest (needs_write_proposal mode)", () => {
+  it("flags create/change-data requests", () => {
+    for (const m of [
+      "Opprett faktura for P1",
+      "registrer mengde på prosjektet",
+      "fakturer kunden",
+      "endre status på prosjekt 7100",
+      "oppdater mengden i Endre",
+      "send dette til Tripletex",
+    ]) {
+      expect(isWriteRequest(m)).toBe(true);
+    }
+  });
+
+  it("does NOT flag read questions that mention the same nouns", () => {
+    for (const m of [
+      "hvor mye er fakturert på 7100?",
+      "hva er status på prosjekt P1?",
+      "vis registrert mengde på prosjektet",
+      "hva sier Tripletex om fakturastatus?",
+    ]) {
+      expect(isWriteRequest(m)).toBe(false);
     }
   });
 });

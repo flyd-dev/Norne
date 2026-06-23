@@ -234,6 +234,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<ChatError | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -256,9 +257,23 @@ export default function Chat() {
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }
 
+  // Merge fields into the most recent assistant message (the one being streamed).
+  function patchLastAssistant(patch: Partial<ChatMessage>) {
+    setMessages((prev) => {
+      const copy = [...prev];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].role === "assistant") {
+          copy[i] = { ...copy[i], ...patch };
+          break;
+        }
+      }
+      return copy;
+    });
+  }
+
   async function sendMessage(text: string) {
     const message = text.trim();
-    if (!message || loading) return;
+    if (!message || loading || streaming) return;
 
     setError(null);
     setInput("");
@@ -276,46 +291,117 @@ export default function Chat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, stream: true }),
       });
 
-      let data: ApiResponse = {};
-      try {
-        data = (await res.json()) as ApiResponse;
-      } catch {
-        // Non-JSON response (e.g. proxy/gateway error).
-      }
-
-      if (!res.ok || data.error) {
+      // Errors (validation/config) come back as plain JSON with a non-2xx status.
+      if (!res.ok || !res.body) {
+        let data: ApiResponse = {};
+        try {
+          data = (await res.json()) as ApiResponse;
+        } catch {
+          /* non-JSON */
+        }
         setError({
           message:
-            data.error ??
-            "Kunne ikke hente svar akkurat nå. Prøv igjen om litt.",
+            data.error ?? "Kunne ikke hente svar akkurat nå. Prøv igjen om litt.",
           requestId: data.requestId,
         });
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.answer ?? "(tomt svar)",
-          sources: data.sources,
-          warnings: data.warnings,
-          firestoreCollections: data.dataUsed?.firestoreCollections,
-          documents: data.dataUsed?.documents,
-          route: data.route,
-          question: message,
-        },
-      ]);
+      // Read the newline-delimited JSON stream and render the answer as it lands.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let started = false; // have we created the assistant bubble yet?
+
+      const handleEvent = (evt: {
+        type: string;
+        text?: string;
+        answer?: string;
+        sources?: string[];
+        warnings?: string[];
+        dataUsed?: ApiResponse["dataUsed"];
+        route?: string;
+        error?: string;
+        requestId?: string;
+      }) => {
+        if (evt.type === "token" && evt.text) {
+          if (!started) {
+            started = true;
+            setLoading(false);
+            setStreaming(true);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: evt.text ?? "", question: message },
+            ]);
+          } else {
+            const chunk = evt.text;
+            setMessages((prev) => {
+              const copy = [...prev];
+              for (let i = copy.length - 1; i >= 0; i--) {
+                if (copy[i].role === "assistant") {
+                  copy[i] = { ...copy[i], content: copy[i].content + chunk };
+                  break;
+                }
+              }
+              return copy;
+            });
+          }
+        } else if (evt.type === "done") {
+          const finalMsg: ChatMessage = {
+            role: "assistant",
+            content: evt.answer ?? "(tomt svar)",
+            sources: evt.sources,
+            warnings: evt.warnings,
+            firestoreCollections: evt.dataUsed?.firestoreCollections,
+            documents: evt.dataUsed?.documents,
+            route: evt.route,
+            question: message,
+          };
+          if (!started) {
+            // No tokens were streamed (deterministic/guarded answer): add it now.
+            setMessages((prev) => [...prev, finalMsg]);
+          } else {
+            patchLastAssistant(finalMsg);
+          }
+          setStreaming(false);
+        } else if (evt.type === "error") {
+          setStreaming(false);
+          setError({
+            message:
+              evt.error ?? "Kunne ikke hente svar akkurat nå. Prøv igjen om litt.",
+            requestId: evt.requestId,
+          });
+        }
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          try {
+            handleEvent(JSON.parse(line));
+          } catch {
+            /* ignore malformed line */
+          }
+        }
+      }
     } catch {
+      setStreaming(false);
       setError({
         message:
           "Nettverksfeil – fikk ikke kontakt med tjenesten. Sjekk tilkoblingen og prøv igjen.",
       });
     } finally {
       setLoading(false);
+      setStreaming(false);
     }
   }
 
@@ -400,7 +486,14 @@ export default function Chat() {
                 </div>
 
                 {m.role === "assistant" ? (
-                  renderAnswer(m.content)
+                  <>
+                    {renderAnswer(m.content)}
+                    {streaming && i === messages.length - 1 && (
+                      <span className="stream-caret" aria-hidden="true">
+                        ▍
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <div className="answer">{m.content}</div>
                 )}
@@ -523,15 +616,15 @@ export default function Chat() {
               onKeyDown={onKeyDown}
               placeholder="Spør om et prosjekt, budsjettlinjer eller mengder..."
               rows={1}
-              disabled={loading}
+              disabled={loading || streaming}
               aria-label="Skriv en melding"
             />
             <button
               className="send-btn"
               onClick={() => void sendMessage(input)}
-              disabled={loading || !input.trim()}
+              disabled={loading || streaming || !input.trim()}
             >
-              {loading ? "Sender …" : "Send"}
+              {loading || streaming ? "Sender …" : "Send"}
             </button>
           </div>
           <p className="disclaimer">

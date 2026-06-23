@@ -25,5 +25,21 @@ export function createOpenAIProvider(): LLMProvider {
       });
       return completion.choices[0]?.message?.content?.trim() ?? "";
     },
+
+    async *streamAnswer({ systemPrompt, userPrompt }: GenerateAnswerInput) {
+      const stream = await client.chat.completions.create({
+        model,
+        ...samplingParams(model),
+        stream: true,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      });
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) yield delta;
+      }
+    },
   };
 }

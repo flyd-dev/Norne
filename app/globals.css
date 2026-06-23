@@ -291,6 +291,19 @@ body {
   word-wrap: break-word;
   overflow-wrap: anywhere;
 }
+/* Blinking caret shown at the end of an answer while it streams in. */
+.stream-caret {
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--gold, #c79a3a);
+  font-weight: 700;
+  animation: norne-blink 1s steps(1) infinite;
+}
+@keyframes norne-blink {
+  50% {
+    opacity: 0;
+  }
+}
 .answer p {
   margin: 0 0 9px;
 }
