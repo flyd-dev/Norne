@@ -98,7 +98,11 @@ import {
 } from "@/lib/chat/endreSource";
 import {
   CAPABILITIES_ANSWER,
+  CONVERSATION_SYSTEM,
   isCapabilitiesQuestion,
+  isSmalltalkMessage,
+  mentionsCompanyDomain,
+  smalltalkAnswer,
 } from "@/lib/chat/capabilities";
 import { deriveConversationState } from "@/lib/chat/conversationState";
 import { deriveChatState } from "@/lib/assistant/state/chatState";
@@ -230,6 +234,36 @@ export async function runChat(
     };
   }
 
+  // --- Smalltalk gate (greetings / acks, instant, no retrieval) -------------
+  // "Hei", "funker du", "takk" are not data questions. Without this they fall
+  // through to the full pipeline and trigger document search + Endre — slow, and
+  // they cite irrelevant sources. Answer with a short canned line; no LLM call,
+  // no retrieval. Only fires when the ENTIRE message is smalltalk.
+  if (isSmalltalkMessage(message)) {
+    const diagnostics: ChatDiagnostics = {
+      intent: "smalltalk",
+      resolvedProjectNumber: null,
+      resolvedProjectName: null,
+      resolvedMetric: null,
+      confidence: "high",
+      selectedSources: [],
+      checkedSources: [],
+      answerFound: true,
+      deterministicAnswerUsed: true,
+      fallbackReasons: [],
+      verifierAction: "none",
+    };
+    logChatPlan(requestId, diagnostics);
+    return {
+      answer: smalltalkAnswer(message),
+      sources: [],
+      dataUsed: { firestoreCollections: [], documents: [] },
+      warnings: [],
+      route: "smalltalk",
+      diagnostics,
+    };
+  }
+
   // --- Conversation-scoped state + clarification gate -----------------------
   // The assistant's memory is THIS chat only. A new chat sends no history, so the
   // derived state is empty and there is no carry-over of project/topic context.
@@ -296,6 +330,54 @@ export async function runChat(
   const retrievalText = followUp.retrievalText;
 
   const intent = detectIntent(retrievalText);
+
+  // --- Conversational gate (answer like a normal chat, NO retrieval) --------
+  // If nothing in the message points at company data — no topic keyword, no
+  // account lookup, no capacity/project/case cue — and it isn't a follow-up to a
+  // prior data answer, then this is general conversation. Answer it directly with
+  // one LLM call and do NOT search documents, Endre or Firestore. This is what
+  // stops the bot from "going into the files" on every message. The domain cue is
+  // high-recall, so a real (keyword-light) question still triggers retrieval.
+  const needsCompanyData =
+    intent.hasDataSignal ||
+    isCaseQuestion(retrievalText) ||
+    mentionsCompanyDomain(retrievalText) ||
+    followUp.isFollowUp ||
+    chatState.currentProject !== null ||
+    chatState.currentCapacityScope !== null;
+  if (!needsCompanyData) {
+    const provider = getLLMProvider();
+    const raw = await provider.generateAnswer({
+      systemPrompt: CONVERSATION_SYSTEM,
+      userPrompt: message,
+      context: {},
+    });
+    const answer =
+      raw.trim() ||
+      "Hei! Spør meg gjerne om prosjekter, dokumenter, kontoføring, bemanning eller saken.";
+    const diagnostics: ChatDiagnostics = {
+      intent: "conversation",
+      resolvedProjectNumber: null,
+      resolvedProjectName: null,
+      resolvedMetric: null,
+      confidence: "high",
+      selectedSources: [],
+      checkedSources: [],
+      answerFound: true,
+      deterministicAnswerUsed: false,
+      fallbackReasons: [],
+      verifierAction: "none",
+    };
+    logChatPlan(requestId, diagnostics);
+    return {
+      answer,
+      sources: [],
+      dataUsed: { firestoreCollections: [], documents: [] },
+      warnings: [],
+      route: "conversation",
+      diagnostics,
+    };
+  }
 
   // Turn the intent into an explicit route with a fixed source/search/format
   // policy. The orchestrator obeys this instead of re-deriving rules inline.

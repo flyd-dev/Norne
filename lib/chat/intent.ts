@@ -45,6 +45,14 @@ export interface DetectedIntent {
   capacity: boolean;
   /** Parsed project demand for a capacity question, if any. */
   capacityDemand: CapacityDemand | null;
+  /**
+   * True when the message carried a REAL data signal (a topic keyword, an account
+   * lookup, a capacity question, or an explicit project id) — i.e. before the
+   * keyword-free projects+accounts fallback. False means nothing in the message
+   * pointed at company data; the orchestrator uses this to answer conversationally
+   * instead of retrieving.
+   */
+  hasDataSignal: boolean;
 }
 
 /**
@@ -64,6 +72,11 @@ export function detectIntent(message: string): DetectedIntent {
   for (const topic of Object.keys(KEYWORDS) as Topic[]) {
     if (KEYWORDS[topic].test(message)) topics.push(topic);
   }
+
+  const explicitProjectId = extractExplicitProjectId(message);
+  // A real data signal existed BEFORE the keyword-free fallback below.
+  const hasDataSignal =
+    topics.length > 0 || lookup.isLookup || capacity || explicitProjectId !== null;
 
   if (lookup.isLookup) {
     // "Hva fører jeg X på?" is always an accounts question, but the subject (X)
@@ -88,12 +101,13 @@ export function detectIntent(message: string): DetectedIntent {
   return {
     topics,
     needsProject,
-    explicitProjectId: extractExplicitProjectId(message),
+    explicitProjectId,
     accountLookup: lookup.isLookup,
     lookupSubject: lookup.subject,
     searchTerms: lookup.expandedTerms,
     capacity,
     capacityDemand: capacity ? parseCapacityDemand(message) : null,
+    hasDataSignal,
   };
 }
 
