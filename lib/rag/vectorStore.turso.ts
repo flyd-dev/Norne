@@ -19,7 +19,10 @@
  */
 
 import "server-only";
-import { env } from "@/lib/env";
+import {
+  closeTursoClient,
+  getTursoClient,
+} from "@/lib/turso/client";
 import type {
   UpsertChunk,
   VectorBackend,
@@ -28,22 +31,10 @@ import type {
 import type { Client } from "@libsql/client";
 
 export function createTursoVectorStore(): VectorBackend {
-  let client: Client | null = null;
   let baseSchemaReady = false;
 
   async function getClient(): Promise<Client> {
-    if (client) return client;
-    const url = env.turso.url();
-    const authToken = env.turso.authToken();
-    if (!url) {
-      throw new Error(
-        "TURSO_DATABASE_URL is not set, but VECTOR_BACKEND=turso. Set the Turso " +
-          "database URL (and TURSO_AUTH_TOKEN) to use the managed vector store.",
-      );
-    }
-    const { createClient } = await import("@libsql/client");
-    client = createClient({ url, ...(authToken ? { authToken } : {}) });
-    return client;
+    return getTursoClient();
   }
 
   /** Create the metadata table (idempotent). The chunks table needs the
@@ -211,11 +202,8 @@ export function createTursoVectorStore(): VectorBackend {
     },
 
     async closeVectorStore(): Promise<void> {
-      if (client) {
-        client.close();
-        client = null;
-        baseSchemaReady = false;
-      }
+      baseSchemaReady = false;
+      closeTursoClient();
     },
   };
 }

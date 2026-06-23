@@ -1,48 +1,57 @@
 /**
- * Firestore-backed persistence for the app's OWN state — the data that lives in
+ * Turso-backed persistence for the app's OWN state — the data that lives in
  * local JSON/SQLite files on the VPS but needs a hosted home on serverless
- * (Vercel), where there is no persistent filesystem. Selected via
- * STORE_BACKEND=cloud; the "local" backend never imports this module.
+ * (Vercel). Selected via STORE_BACKEND=cloud; the "local" backend never imports
+ * this module.
  *
- * This is separate from the read-only DOMAIN data (accounts/projects) served by
- * lib/firestore/service.ts. App state needs writes, so it uses the Admin SDK
- * directly — meaning the cloud backend REQUIRES Admin SDK mode
- * (FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY), not the REST fallback.
+ * Why Turso and not Firestore: the app's Firebase access is read-only REST mode
+ * (no service account), and writes there would hit security rules. Turso is a
+ * full SQL database we already use for vectors, with write access via the auth
+ * token — so app state goes here, and Firebase stays exactly as-is for the
+ * read-only DOMAIN data (accounts/projects, via lib/firestore/service.ts).
  *
- * Collections are namespaced with a `norne_` prefix so they can never collide
- * with domain collections.
+ * Layout:
+ *   app_kv(key TEXT PK, value TEXT)   -- single-doc state (dossier, sync cursor)
+ *   kb_documents(...)                 -- one row per knowledge document
+ *   feedback(...)                     -- one row per feedback record
+ * (kb_documents and feedback are created by their own modules.)
  *
  * Server-side only.
  */
 
 import "server-only";
-import { getAdminFirestore } from "@/lib/firebaseAdmin";
+import { getTursoClient } from "@/lib/turso/client";
 
-export const APP_COLLECTIONS = {
-  /** Single-doc app state (dossier, sharepoint sync cursor). */
-  state: "norne_app_state",
-  /** One doc per uploaded/synced knowledge document. */
-  documents: "norne_knowledge_documents",
-  /** One doc per feedback record (auto id). */
-  feedback: "norne_feedback",
-} as const;
+let kvReady = false;
 
-/** Read a single state document by id, or null when it doesn't exist. */
-export async function readStateDoc<T>(id: string): Promise<T | null> {
-  const snap = await getAdminFirestore()
-    .collection(APP_COLLECTIONS.state)
-    .doc(id)
-    .get();
-  return snap.exists ? (snap.data() as T) : null;
+async function ensureKv() {
+  const c = await getTursoClient();
+  if (!kvReady) {
+    await c.execute(
+      "CREATE TABLE IF NOT EXISTS app_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    );
+    kvReady = true;
+  }
+  return c;
 }
 
-/** Write (replace) a single state document by id. */
-export async function writeStateDoc<T extends Record<string, unknown>>(
-  id: string,
-  data: T,
-): Promise<void> {
-  await getAdminFirestore()
-    .collection(APP_COLLECTIONS.state)
-    .doc(id)
-    .set(data);
+/** Read a single state document by key, or null when it doesn't exist. */
+export async function readStateDoc<T>(key: string): Promise<T | null> {
+  const c = await ensureKv();
+  const res = await c.execute({
+    sql: "SELECT value FROM app_kv WHERE key = ?",
+    args: [key],
+  });
+  const value = res.rows[0]?.value;
+  return value != null ? (JSON.parse(String(value)) as T) : null;
+}
+
+/** Write (upsert) a single state document by key. */
+export async function writeStateDoc<T>(key: string, data: T): Promise<void> {
+  const c = await ensureKv();
+  await c.execute({
+    sql: `INSERT INTO app_kv(key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    args: [key, JSON.stringify(data)],
+  });
 }

@@ -48,21 +48,48 @@ function useCloud(): boolean {
   return env.storeBackend() === "cloud";
 }
 
-// --- Cloud (Firestore) backend -------------------------------------------
-// One Firestore document per knowledge document. Firestore caps a document at
-// ~1 MB, so a single source file whose extracted chunks exceed that will throw
-// a clear error on save rather than truncating silently.
-const FIRESTORE_DOC_LIMIT_BYTES = 1_000_000;
+// --- Cloud (Turso) backend ------------------------------------------------
+// One row per knowledge document in the kb_documents table; chunks + structured
+// tables are stored as JSON text columns. No per-row size limit to worry about
+// (unlike Firestore's ~1 MB/doc), and writes use the Turso auth token.
+let kbReady = false;
 
-async function cloudCollection() {
-  const { getAdminFirestore } = await import("@/lib/firebaseAdmin");
-  const { APP_COLLECTIONS } = await import("@/lib/firestore/appStore");
-  return getAdminFirestore().collection(APP_COLLECTIONS.documents);
+async function kbTable() {
+  const { getTursoClient } = await import("@/lib/turso/client");
+  const c = await getTursoClient();
+  if (!kbReady) {
+    await c.execute(
+      `CREATE TABLE IF NOT EXISTS kb_documents (
+         id          TEXT PRIMARY KEY,
+         name        TEXT NOT NULL,
+         fileType    TEXT NOT NULL,
+         uploadedAt  TEXT NOT NULL,
+         chunkCount  INTEGER NOT NULL,
+         chunks      TEXT NOT NULL,
+         structured  TEXT
+       )`,
+    );
+    kbReady = true;
+  }
+  return c;
 }
 
 async function readAllCloudDocuments(): Promise<StoredDocument[]> {
-  const snap = await (await cloudCollection()).get();
-  return snap.docs.map((d) => d.data() as StoredDocument);
+  const c = await kbTable();
+  const res = await c.execute(
+    "SELECT id, name, fileType, uploadedAt, chunkCount, chunks, structured FROM kb_documents",
+  );
+  return res.rows.map((r) => ({
+    id: String(r.id),
+    name: String(r.name),
+    fileType: String(r.fileType),
+    uploadedAt: String(r.uploadedAt),
+    chunkCount: Number(r.chunkCount),
+    chunks: JSON.parse(String(r.chunks)) as DocumentChunk[],
+    ...(r.structured != null
+      ? { structured: JSON.parse(String(r.structured)) as StructuredTable[] }
+      : {}),
+  }));
 }
 
 async function readStore(): Promise<StoreFile> {
@@ -124,15 +151,26 @@ export async function saveDocument(
   };
 
   if (useCloud()) {
-    const size = Buffer.byteLength(JSON.stringify(doc), "utf8");
-    if (size > FIRESTORE_DOC_LIMIT_BYTES) {
-      throw new Error(
-        `Document "${meta.name}" is ${(size / 1e6).toFixed(2)} MB of extracted ` +
-          `text — over Firestore's ~1 MB per-document limit. Cannot store it in ` +
-          `the cloud backend.`,
-      );
-    }
-    await (await cloudCollection()).doc(meta.id).set(doc);
+    const c = await kbTable();
+    await c.execute({
+      sql: `INSERT INTO kb_documents(id, name, fileType, uploadedAt, chunkCount, chunks, structured)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name, fileType = excluded.fileType,
+              uploadedAt = excluded.uploadedAt, chunkCount = excluded.chunkCount,
+              chunks = excluded.chunks, structured = excluded.structured`,
+      args: [
+        doc.id,
+        doc.name,
+        doc.fileType,
+        doc.uploadedAt,
+        doc.chunkCount,
+        JSON.stringify(doc.chunks),
+        doc.structured && doc.structured.length > 0
+          ? JSON.stringify(doc.structured)
+          : null,
+      ],
+    });
     return;
   }
 
@@ -163,7 +201,8 @@ export async function listDocuments(): Promise<DocumentRecord[]> {
 /** Delete a document and its chunks. */
 export async function deleteDocument(id: string): Promise<void> {
   if (useCloud()) {
-    await (await cloudCollection()).doc(id).delete();
+    const c = await kbTable();
+    await c.execute({ sql: "DELETE FROM kb_documents WHERE id = ?", args: [id] });
     return;
   }
   await withLock(async () => {

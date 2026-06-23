@@ -115,12 +115,13 @@ falling back to keyword search otherwise. Neither requires orchestrator changes.
   only pick up changes. Drive it with `node scripts/sync-sharepoint.mjs`. No paid
   Azure subscription — the app registration lives in Entra ID, included with the
   Microsoft 365 tenant that hosts SharePoint.
-- **Storage backend**: the app's own data (document chunks, dossier, feedback,
-  sync cursors) is stored behind a `STORE_BACKEND` switch — `local` (default:
-  JSON + `sqlite-vec` files on the VPS) or `cloud` (**Turso** for vectors +
-  **Firestore** for the JSON stores), required on serverless hosts like
-  **Vercel**. In cloud mode `better-sqlite3` is never imported (the vector
-  backend is lazy-loaded). To move from the VPS to Vercel, see
+- **Storage backend**: the app's own data (document chunks + vectors, dossier,
+  feedback, sync cursors) is stored behind a `STORE_BACKEND` switch — `local`
+  (default: JSON + `sqlite-vec` files on the VPS) or `cloud` (everything the app
+  writes goes to **Turso**/libSQL), required on serverless hosts like **Vercel**.
+  Domain data (accounts/projects) stays in Firestore either way, so no Firebase
+  service account is needed. In cloud mode `better-sqlite3` is never imported
+  (the vector backend is lazy-loaded). To move from the VPS to Vercel, see
   [docs/VERCEL-MIGRATION.md](docs/VERCEL-MIGRATION.md). The nightly refresh runs
   via the `/api/cron/sync` Cron route on Vercel, or `scripts/nightly-update.sh`
   on the VPS.
