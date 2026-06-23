@@ -33,6 +33,10 @@ export const MAX_DOCUMENT_MATCHES = 6;
 /** Wider cap for capacity questions, which need most of the staffing plan. */
 export const MAX_CAPACITY_MATCHES = 16;
 
+/** Widest cap for broad case/overview questions ("hele saken"), which span many
+ * documents. Used alongside the injected case dossier. */
+export const MAX_CASE_MATCHES = 40;
+
 export interface SearchOptions {
   /** Max chunks to return (defaults to MAX_DOCUMENT_MATCHES). */
   limit?: number;
