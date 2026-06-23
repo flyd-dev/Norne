@@ -16,7 +16,9 @@ import { errorTypeOf, logAdminError, newRequestId } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// Dossier synthesis is one large LLM call (~150k tokens) that can take ~6 min,
+// so it needs the long ceiling (Vercel Pro fluid compute allows up to 800s).
+export const maxDuration = 800;
 
 function guard(request: Request) {
   if (!adminConfigured()) {

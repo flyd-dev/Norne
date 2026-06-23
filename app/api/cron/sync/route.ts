@@ -20,7 +20,10 @@ import { errorTypeOf, logAdminError, newRequestId } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// Sync batches are bounded, but a nightly run may also regenerate the dossier
+// (one ~6 min LLM call when documents changed), so use the long ceiling (Vercel
+// Pro fluid compute allows up to 800s).
+export const maxDuration = 800;
 
 /** Stop STARTING new batches past this elapsed time, leaving room to finish +
  * regenerate the dossier within maxDuration (300s). */

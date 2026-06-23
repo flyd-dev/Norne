@@ -7,8 +7,8 @@
     }
   ],
   "functions": {
-    "app/api/cron/sync/route.ts": { "maxDuration": 300 },
+    "app/api/cron/sync/route.ts": { "maxDuration": 800 },
     "app/api/admin/sharepoint/sync/route.ts": { "maxDuration": 300 },
-    "app/api/admin/dossier/route.ts": { "maxDuration": 300 }
+    "app/api/admin/dossier/route.ts": { "maxDuration": 800 }
   }
 }

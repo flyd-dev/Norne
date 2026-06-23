@@ -95,6 +95,23 @@ Do **not** set `DOCUMENT_STORE_PATH` / `VECTOR_STORE_PATH` / `DOSSIER_PATH` /
 Nothing about the VPS changed. To revert, just keep using it — its env still has
 `STORE_BACKEND=local` (or unset). The cloud and local backends are independent.
 
+## Dossier generation is slow (~6 min)
+
+Synthesising the dossier is one large LLM call (~150k tokens) that takes ~6
+minutes for this corpus. The in-app routes (`/api/admin/dossier` and the nightly
+`/api/cron/sync`) therefore set `maxDuration = 800` and need **Vercel Pro**
+(fluid compute, up to 800s). The nightly cron only regenerates the dossier when
+documents actually changed, so most nights it does a quick sync and skips it.
+
+If a regeneration ever needs to run with no time limit at all (or off-Vercel),
+use the out-of-band script — it reads chunks from Turso, makes the LLM call, and
+writes the dossier straight into Turso's `app_kv`:
+
+```bash
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... OPENAI_API_KEY=... OPENAI_MODEL=gpt-5.5 \
+  node scripts/generate-dossier-direct.mjs
+```
+
 ## Notes / limitations
 
 - **All app data is in one Turso DB**: chunks+vectors (`chunks` table),
