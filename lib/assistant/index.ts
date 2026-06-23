@@ -11,11 +11,15 @@
  * the public contract — callers keep using runAssistantTurn.
  */
 
-import { runChat, type ChatResult } from "@/lib/chat/orchestrator";
+import {
+  runChat,
+  type ChatResult,
+  type RunChatOptions,
+} from "@/lib/chat/orchestrator";
 import { env } from "@/lib/env";
 import type { HistoryMessage } from "@/lib/chat/historyFacts";
 
-export type { ChatResult } from "@/lib/chat/orchestrator";
+export type { ChatResult, RunChatOptions } from "@/lib/chat/orchestrator";
 export type { HistoryMessage } from "@/lib/chat/historyFacts";
 
 /**
@@ -32,10 +36,12 @@ export async function runAssistantTurn(
   message: string,
   requestId: string,
   history: HistoryMessage[] = [],
+  options: RunChatOptions = {},
 ): Promise<ChatResult> {
   if (env.assistant.agentMode()) {
+    // The agent loop has its own (non-streaming) path; options are ignored.
     const { runAgentTurn } = await import("@/lib/assistant/agent/run");
     return runAgentTurn(message, requestId, history);
   }
-  return runChat(message, requestId, history);
+  return runChat(message, requestId, history, options);
 }

@@ -200,11 +200,45 @@ type ContextBlock = Record<string, unknown>;
 /** The assistant tool registry, built once and shared across requests. */
 const toolRegistry = buildRegistry();
 
+/** Optional per-turn behaviour (streaming sink). */
+export interface RunChatOptions {
+  /**
+   * Called with each text chunk as the answer is generated, for the streamable
+   * answers (conversational + document/case free-text). Not called for the
+   * deterministic/guarded answers (metric/capacity), which are computed and
+   * returned whole. The final ChatResult.answer is always the authoritative
+   * full answer regardless.
+   */
+  onToken?: (chunk: string) => void;
+}
+
 export async function runChat(
   message: string,
   requestId: string,
   history: ChatHistoryMessage[] = [],
+  options: RunChatOptions = {},
 ): Promise<ChatResult> {
+  // Stream the answer through `onToken` when the caller asked for it AND the
+  // provider supports streaming; otherwise generate it whole. `streamable` gates
+  // OUT the guarded answers (metric/capacity), whose text may be replaced after
+  // generation — those are always produced whole.
+  const generate = async (
+    systemPrompt: string,
+    userPrompt: string,
+    context: unknown,
+    streamable: boolean,
+  ): Promise<string> => {
+    const provider = getLLMProvider();
+    if (options.onToken && streamable && provider.streamAnswer) {
+      let acc = "";
+      for await (const chunk of provider.streamAnswer({ systemPrompt, userPrompt, context })) {
+        acc += chunk;
+        options.onToken(chunk);
+      }
+      return acc;
+    }
+    return provider.generateAnswer({ systemPrompt, userPrompt, context });
+  };
   // --- Early meta / capabilities gate (runs FIRST, before any retrieval) -----
   // A "Hva kan du gjøre?"-style question is about the assistant itself, not about
   // company data. Answer deterministically and short-circuit: no follow-up
@@ -379,12 +413,7 @@ export async function runChat(
     chatState.currentProject !== null ||
     chatState.currentCapacityScope !== null;
   if (!needsCompanyData) {
-    const provider = getLLMProvider();
-    const raw = await provider.generateAnswer({
-      systemPrompt: CONVERSATION_SYSTEM,
-      userPrompt: message,
-      context: {},
-    });
+    const raw = await generate(CONVERSATION_SYSTEM, message, {}, true);
     const answer =
       raw.trim() ||
       "Hei! Spør meg gjerne om prosjekter, dokumenter, kontoføring, bemanning eller saken.";
@@ -1340,12 +1369,16 @@ export async function runChat(
   const note = notes.length > 0 ? notes.join("\n\n") : undefined;
   const userPrompt = buildUserPrompt(message, contextJson, note);
 
-  const provider = getLLMProvider();
-  const raw = await provider.generateAnswer({
-    systemPrompt: SYSTEM_PROMPT,
-    userPrompt,
-    context,
-  });
+  // Stream this answer only when no post-generation guard could replace it: the
+  // metric (deterministic/guarded), capacity, and monthly-capacity routes are
+  // produced whole so a correction never causes a visible "jump". Everything
+  // else (document/case/account/project free-text) streams.
+  const streamable =
+    !isMetricLookup &&
+    knownValue === null &&
+    !intent.capacity &&
+    decision.route !== "monthly_capacity";
+  const raw = await generate(SYSTEM_PROMPT, userPrompt, context, streamable);
 
   let answer = raw.trim() || "Jeg har ikke nok informasjon til å svare på det.";
 

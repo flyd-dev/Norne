@@ -23,4 +23,11 @@ export interface LLMProvider {
   readonly name: LlmProvider;
   /** Generate a grounded answer from the given prompts. */
   generateAnswer(input: GenerateAnswerInput): Promise<string>;
+  /**
+   * Optional streaming variant: yields the answer in text chunks as the model
+   * produces them. When a provider doesn't implement it, callers fall back to
+   * generateAnswer (one chunk). Used for the conversational + document/case
+   * answers so the UI can render them as they're written.
+   */
+  streamAnswer?(input: GenerateAnswerInput): AsyncIterable<string>;
 }

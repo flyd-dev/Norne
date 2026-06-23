@@ -71,6 +71,39 @@ describe("POST /api/chat — success", () => {
   });
 });
 
+describe("POST /api/chat — streaming ({ stream: true })", () => {
+  it("emits token events then a done event as newline-delimited JSON", async () => {
+    // The mocked orchestrator streams two chunks via onToken, then resolves.
+    mockedRunChat.mockImplementationOnce(async (_m, _r, _h, opts) => {
+      opts?.onToken?.("Hei ");
+      opts?.onToken?.("verden");
+      return {
+        answer: "Hei verden",
+        sources: ["x"],
+        dataUsed: { firestoreCollections: [], documents: [] },
+        warnings: [],
+        route: "conversation",
+      };
+    });
+
+    const res = await POST(postRequest({ message: "skriv noe", stream: true }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+
+    const text = await res.text();
+    const events = text
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+
+    expect(events).toEqual([
+      { type: "token", text: "Hei " },
+      { type: "token", text: "verden" },
+      expect.objectContaining({ type: "done", answer: "Hei verden", route: "conversation" }),
+    ]);
+  });
+});
+
 describe("POST /api/chat — optional history (follow-ups)", () => {
   beforeEach(() => {
     mockedRunChat.mockResolvedValue({
@@ -84,7 +117,7 @@ describe("POST /api/chat — optional history (follow-ups)", () => {
   it("still accepts the old { message } shape (no history)", async () => {
     const res = await POST(postRequest({ message: "Hei" }));
     expect(res.status).toBe(200);
-    expect(mockedRunChat).toHaveBeenCalledWith("Hei", expect.any(String), []);
+    expect(mockedRunChat).toHaveBeenCalledWith("Hei", expect.any(String), [], {});
   });
 
   it("passes valid recent history through to the orchestrator", async () => {
@@ -97,10 +130,15 @@ describe("POST /api/chat — optional history (follow-ups)", () => {
         ],
       }),
     );
-    expect(mockedRunChat).toHaveBeenCalledWith("sjekk den", expect.any(String), [
-      { role: "user", content: "Har vi kapasitet i august?" },
-      { role: "assistant", content: "Jeg mangler info." },
-    ]);
+    expect(mockedRunChat).toHaveBeenCalledWith(
+      "sjekk den",
+      expect.any(String),
+      [
+        { role: "user", content: "Har vi kapasitet i august?" },
+        { role: "assistant", content: "Jeg mangler info." },
+      ],
+      {},
+    );
   });
 
   it("ignores malformed history entries without failing the request", async () => {
@@ -116,9 +154,12 @@ describe("POST /api/chat — optional history (follow-ups)", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(mockedRunChat).toHaveBeenCalledWith("sjekk den", expect.any(String), [
-      { role: "user", content: "Gyldig melding" },
-    ]);
+    expect(mockedRunChat).toHaveBeenCalledWith(
+      "sjekk den",
+      expect.any(String),
+      [{ role: "user", content: "Gyldig melding" }],
+      {},
+    );
   });
 
   it("keeps only the last 6 history messages", async () => {

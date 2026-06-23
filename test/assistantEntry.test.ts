@@ -24,11 +24,11 @@ describe("runAssistantTurn", () => {
   it("delegates to the orchestrator and returns its result", async () => {
     const r = await runAssistantTurn("hei", "req", []);
     expect(r.answer).toBe("svar:hei");
-    expect(runChat).toHaveBeenCalledWith("hei", "req", []);
+    expect(runChat).toHaveBeenCalledWith("hei", "req", [], {});
   });
 
   it("defaults history to empty", async () => {
     await runAssistantTurn("test", "req2");
-    expect(runChat).toHaveBeenCalledWith("test", "req2", []);
+    expect(runChat).toHaveBeenCalledWith("test", "req2", [], {});
   });
 });
