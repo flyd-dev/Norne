@@ -115,6 +115,15 @@ falling back to keyword search otherwise. Neither requires orchestrator changes.
   only pick up changes. Drive it with `node scripts/sync-sharepoint.mjs`. No paid
   Azure subscription — the app registration lives in Entra ID, included with the
   Microsoft 365 tenant that hosts SharePoint.
+- **Storage backend**: the app's own data (document chunks, dossier, feedback,
+  sync cursors) is stored behind a `STORE_BACKEND` switch — `local` (default:
+  JSON + `sqlite-vec` files on the VPS) or `cloud` (**Turso** for vectors +
+  **Firestore** for the JSON stores), required on serverless hosts like
+  **Vercel**. In cloud mode `better-sqlite3` is never imported (the vector
+  backend is lazy-loaded). To move from the VPS to Vercel, see
+  [docs/VERCEL-MIGRATION.md](docs/VERCEL-MIGRATION.md). The nightly refresh runs
+  via the `/api/cron/sync` Cron route on Vercel, or `scripts/nightly-update.sh`
+  on the VPS.
 - **Case dossier**: a deep, analysed whole-case overview synthesised across all
   indexed documents in one LLM call (`node scripts/generate-dossier.mjs`), stored
   locally (`DOSSIER_PATH`). It is the bot's resident case knowledge — cached in
