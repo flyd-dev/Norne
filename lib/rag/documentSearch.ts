@@ -34,8 +34,14 @@ export const MAX_DOCUMENT_MATCHES = 6;
 export const MAX_CAPACITY_MATCHES = 16;
 
 /** Widest cap for broad case/overview questions ("hele saken"), which span many
- * documents. Used alongside the injected case dossier. */
+ * documents. Used when there is no dossier to lean on. */
 export const MAX_CASE_MATCHES = 40;
+
+/** Lighter cap for broad case/overview questions WHEN the resident case dossier
+ * is available: the dossier already carries the whole-case breadth, so we only
+ * need a few supporting chunks for citations/detail. Keeping this small is what
+ * makes case answers fast — no 40-chunk sweep on every question. */
+export const MAX_CASE_MATCHES_WITH_DOSSIER = 10;
 
 export interface SearchOptions {
   /** Max chunks to return (defaults to MAX_DOCUMENT_MATCHES). */
