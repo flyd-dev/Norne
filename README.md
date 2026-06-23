@@ -78,6 +78,9 @@ lib/
     sync.ts              resumable/incremental sync → extract → index
     syncState.ts         per-drive delta cursors (local JSON)
     types.ts             Graph + sync types
+  dossier/
+    generate.ts          whole-case overview synthesised across all docs (1 LLM call)
+    store.ts             local JSON persistence for the dossier
   admin/
     auth.ts              bearer-token check for admin routes
   llm/                   pluggable LLM providers (OpenAI / Ollama)
@@ -85,6 +88,7 @@ app/
   admin/documents/       protected upload UI
   api/admin/documents/   upload (POST), list (GET), delete (DELETE), reindex (POST)
   api/admin/sharepoint/  sync (POST, resumable batch)
+  api/admin/dossier/     generate (POST), view (GET) the whole-case dossier
 components/
   AdminDocuments.tsx     admin upload/list/delete UI
 test/
@@ -111,6 +115,11 @@ falling back to keyword search otherwise. Neither requires orchestrator changes.
   only pick up changes. Drive it with `node scripts/sync-sharepoint.mjs`. No paid
   Azure subscription — the app registration lives in Entra ID, included with the
   Microsoft 365 tenant that hosts SharePoint.
+- **Case dossier**: a whole-case overview synthesised across all indexed
+  documents in one LLM call (`node scripts/generate-dossier.mjs`), stored locally
+  (`DOSSIER_PATH`) and injected on case/overview questions (detected by phrasing)
+  alongside a wider chunk retrieval — so the bot has the big picture while still
+  citing the underlying documents. Regenerate after a sync.
 
 ---
 

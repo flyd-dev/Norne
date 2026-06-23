@@ -33,8 +33,10 @@ import { resolveProject } from "@/lib/chat/projectResolver";
 import {
   searchDocuments,
   MAX_CAPACITY_MATCHES,
+  MAX_CASE_MATCHES,
   type DocumentMatch,
 } from "@/lib/rag/documentSearch";
+import { readDossier } from "@/lib/dossier/store";
 import type { DocumentReference, StoredStructuredTable } from "@/lib/documents/types";
 import { getStructuredTables } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
@@ -103,6 +105,18 @@ import { validateToolRuns } from "@/lib/assistant/validate";
 import { planTurnTools, type ToolRun } from "@/lib/assistant/runner";
 import { buildRegistry } from "@/lib/assistant/tools/index";
 import { decideClarification, isClarificationQuestion } from "@/lib/chat/clarify";
+
+/**
+ * Broad case / overview phrasing about the Nornebygg case. These questions span
+ * many documents, so they get the widest chunk budget AND the injected case
+ * dossier (the whole-case overview) — see the document-search section below.
+ */
+const CASE_QUESTION_RE =
+  /\b(saken|saksgang|saksframstilling|rettssak|rettsak|hovedforhandling|tvist(?:en|e|er)?|motpart(?:en|er)?|advokat(?:en|er)?|tidslinj(?:e|en)|hele saken|oversikt over saken|hva (?:handler|gjelder|dreier) saken|status (?:i|på|for) saken|oppsummer(?:ing)?(?: av)? saken|sammendrag(?: av)? saken|forhistori(?:e|en))\b/i;
+
+function isCaseQuestion(text: string): boolean {
+  return CASE_QUESTION_RE.test(text);
+}
 
 /** Max top-level docs (accounts/projects) included in the model context. */
 const MAX_ITEMS_PER_SOURCE = 50;
@@ -848,11 +862,17 @@ export async function runChat(
   // For account-posting questions, expand the query with related accounting
   // terms (synonyms + category words) and an anchor toward the chart of accounts,
   // so the closest matching account is found even when the exact word is absent.
+  const caseQuestion = isCaseQuestion(retrievalText);
   let matches: DocumentMatch[] = [];
   if (isProjectList) {
     // A combined project list answers from the structured projects field only —
     // no document chunks (they would just add noise and irrelevant sources).
     matches = [];
+  } else if (caseQuestion && !intent.capacity) {
+    // Broad case/overview question: pull the widest set of chunks across all
+    // documents (the dossier injected below gives the big picture; these chunks
+    // give the supporting detail).
+    matches = await searchDocuments(retrievalText, { limit: MAX_CASE_MATCHES });
   } else if (intent.capacity) {
     // Staffing/capacity question: search the staffing plan aggressively. Boost
     // the bemanningsplan document, capacity-related sheets and role/month terms;
@@ -905,6 +925,22 @@ export async function runChat(
       chunkIndex: m.chunkIndex,
       text: m.text,
     }));
+  }
+
+  // Inject the whole-case dossier on case/overview questions, so the bot answers
+  // with the big picture in mind (and still cites the documents above).
+  if (caseQuestion) {
+    const dossier = await readDossier();
+    if (dossier) {
+      context.case_dossier = dossier.text;
+      notes.push(
+        'Dette gjelder Nornebygg-saken. Feltet "case_dossier" i konteksten er en ' +
+          "oversikt over hele saken — bruk den til å forstå helheten og svare på " +
+          'brede spørsmål. For konkrete detaljer, bygg på dokumentene ("documents") ' +
+          "og nevn hvilket dokument. Dossieret er et hjelpemiddel; ved juridiske " +
+          "konsekvenser eller tvil, vis til advokaten.",
+      );
+    }
   }
 
   const documents: DocumentReference[] = matches.map((m) => ({

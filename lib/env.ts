@@ -126,6 +126,14 @@ export const env = {
       readOptional("DOCUMENT_FEEDBACK_PATH") ??
       "/var/lib/norne-chatbot/feedback.json",
   },
+  dossier: {
+    // Local JSON file holding the generated case "dossier" — a structured
+    // overview of the whole case, synthesised across all indexed documents and
+    // injected on case/overview questions so the bot has the big picture. Built
+    // on demand (scripts/generate-dossier.mjs), NOT in the request path.
+    storePath: () =>
+      readOptional("DOSSIER_PATH") ?? "/var/lib/norne-chatbot/case-dossier.json",
+  },
   sharepoint: {
     // Optional integration: sync a SharePoint document library into the
     // knowledge base via Microsoft Graph (app-only / client credentials).
