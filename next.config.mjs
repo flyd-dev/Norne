@@ -8,6 +8,8 @@ const nextConfig = {
     "pdf-parse",
     "mammoth",
     "xlsx",
+    "adm-zip",
+    "@kenjiuno/msgreader",
     // Native module (.node binary) + its loadable extension — must NOT be
     // bundled, or the bundled loader breaks at runtime ("{}.resolve is not a
     // function" when better-sqlite3's binding resolver loses `path`).

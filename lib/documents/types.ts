@@ -1,6 +1,14 @@
 /** Types for the document knowledge base (upload, extraction, chunking, storage). */
 
-export const SUPPORTED_FILE_TYPES = ["pdf", "docx", "txt", "csv", "xlsx"] as const;
+export const SUPPORTED_FILE_TYPES = [
+  "pdf",
+  "docx",
+  "pptx",
+  "txt",
+  "csv",
+  "xlsx",
+  "msg",
+] as const;
 export type SupportedFileType = (typeof SUPPORTED_FILE_TYPES)[number];
 
 /** One extracted text segment. For XLSX, one segment per sheet (with sheetName). */

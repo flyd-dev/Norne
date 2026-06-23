@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     fileTypeFromName(file.name);
   } catch {
     return NextResponse.json(
-      { error: "Filtypen støttes ikke. Tillatt: PDF, DOCX, TXT, CSV, XLSX." },
+      { error: "Filtypen støttes ikke. Tillatt: PDF, DOCX, PPTX, TXT, CSV, XLSX, MSG." },
       { status: 415 },
     );
   }
