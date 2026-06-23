@@ -165,6 +165,31 @@ export function mentionsCompanyDomain(message: string): boolean {
   return DOMAIN_CUE.test(message);
 }
 
+/**
+ * Write / mutation intent — the spec's `needs_write_proposal` mode. The bot is
+ * read-only (no Tripletex/Endre write tools), and the spec is firm that write
+ * actions must NEVER execute without explicit confirmation (grunnprinsipp 4). So
+ * a request to create/change data must be declined clearly, not mishandled as a
+ * data lookup. Conservative: requires a write VERB together with a business
+ * OBJECT, so reads like "hva er fakturert på 7100" never match.
+ */
+const WRITE_PATTERNS: RegExp[] = [
+  /\b(opprett|opprette|lag|registrer|registrere|legg inn|book|før)\b[^.?!]*\b(faktura\w*|kreditnota|ordre|bestilling\w*|innkj(?:ø|o)p|mengde\w*|time(?:r|liste)?\w*|bilag|post(?:ering)?)\b/i,
+  /\b(endre|endra|oppdater|oppdatere|slett|slette|sett|avslutt|lukk)\b[^.?!]*\b(status|mengde\w*|faktura\w*|ordre|prosjekt\w*|bemanning\w*|registrering\w*)\b/i,
+  /\bfakturer(?:e|es)?\b/i,
+  /\bsend(?:es|e)?\b[^.?!]*\b(tripletex|endre)\b/i,
+];
+
+/** True when the message asks the assistant to create or change data. */
+export function isWriteRequest(message: string): boolean {
+  return WRITE_PATTERNS.some((re) => re.test(message));
+}
+
+/** Reply for a write request: the bot reads/looks up, it does not mutate data. */
+export const WRITE_REQUEST_ANSWER = `Jeg kan ikke utføre handlinger som endrer data — som å opprette faktura eller ordre, registrere mengder eller endre status i Tripletex/Endre. Jeg er et lese- og oppslagsverktøy, og slike skrivehandlinger er ikke aktivert (de skal uansett kreve manuell bekreftelse før de utføres).
+
+Det jeg derimot kan hjelpe deg med, er å finne tallene, dokumentene eller statusen du trenger for å gjøre det selv — så si gjerne hva du vil slå opp.`;
+
 /** System prompt for the conversational (no-retrieval) path. */
 export const CONVERSATION_SYSTEM = `Du er Norne Assistant, en intern assistent for Nornebygg. Dette er en vanlig samtalemelding som ikke handler om konkrete firmadata, så svar kort og naturlig som i en vanlig chat — uten å slå opp i dokumenter, prosjekter eller andre kilder.
 

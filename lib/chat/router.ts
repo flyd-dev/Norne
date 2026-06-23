@@ -21,6 +21,7 @@ export type Route =
   | "capabilities_help"
   | "smalltalk"
   | "conversation"
+  | "write_request"
   | "clarification"
   | "account_lookup"
   | "account_list"

@@ -99,8 +99,10 @@ import {
 import {
   CAPABILITIES_ANSWER,
   CONVERSATION_SYSTEM,
+  WRITE_REQUEST_ANSWER,
   isCapabilitiesQuestion,
   isSmalltalkMessage,
+  isWriteRequest,
   mentionsCompanyDomain,
   smalltalkAnswer,
 } from "@/lib/chat/capabilities";
@@ -260,6 +262,37 @@ export async function runChat(
       dataUsed: { firestoreCollections: [], documents: [] },
       warnings: [],
       route: "smalltalk",
+      diagnostics,
+    };
+  }
+
+  // --- Write-intent gate (the spec's needs_write_proposal mode) -------------
+  // The assistant is read-only — it has no Tripletex/Endre write tools, and the
+  // spec forbids executing any write without explicit confirmation (grunnprinsipp
+  // 4). A "create/change data" request (opprett faktura, registrer mengde, …) is
+  // declined clearly here instead of being mishandled as a data lookup. Runs
+  // before any retrieval; no sources.
+  if (isWriteRequest(message)) {
+    const diagnostics: ChatDiagnostics = {
+      intent: "write_request",
+      resolvedProjectNumber: null,
+      resolvedProjectName: null,
+      resolvedMetric: null,
+      confidence: "high",
+      selectedSources: [],
+      checkedSources: [],
+      answerFound: true,
+      deterministicAnswerUsed: true,
+      fallbackReasons: [],
+      verifierAction: "none",
+    };
+    logChatPlan(requestId, diagnostics);
+    return {
+      answer: WRITE_REQUEST_ANSWER,
+      sources: [],
+      dataUsed: { firestoreCollections: [], documents: [] },
+      warnings: [],
+      route: "write_request",
       diagnostics,
     };
   }
