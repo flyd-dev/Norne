@@ -33,6 +33,8 @@ export interface AgentDeps {
   getQuantities: (projectId: string) => Promise<Record<string, unknown>[]>;
   listDocuments: () => Promise<{ name: string; fileType: string }[]>;
   searchDocuments: (query: string) => Promise<DocumentMatch[]>;
+  /** The pre-synthesised whole-case overview (Nornebygg/HEYAS), or null. */
+  readCaseDossier: () => Promise<string | null>;
   endreClient: EndreClient | null;
 }
 
@@ -245,6 +247,27 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
         rows: rows.slice(0, 200).map(stripIds),
         sources: ["quantities"],
       };
+    },
+  },
+  {
+    name: "get_case_dossier",
+    description:
+      "Det ferdig analyserte saksdossieret for Nornebygg/HEYAS-saken: sakens " +
+      "kjerne, parter, tidslinje, omtvistede punkter, styrker OG svakheter, og " +
+      "status. Kall dette FØRST på alle spørsmål om saken, rettssaken, " +
+      "prosessen, prosessrisiko, sannsynlighet for ulike utfall, eller en " +
+      "vurdering av hvordan saken står. Bygg videre med search_documents for " +
+      "konkrete sitater/detaljer.",
+    parameters: { type: "object", properties: {} },
+    async execute(_args, deps) {
+      const text = await deps.readCaseDossier();
+      if (!text) {
+        return {
+          found: false,
+          note: "Saksdossieret er ikke generert ennå. Bruk search_documents på sakens dokumenter i stedet.",
+        };
+      }
+      return { found: true, dossier: text, sources: ["Saksdossier (Nornebygg/HEYAS)"] };
     },
   },
   {

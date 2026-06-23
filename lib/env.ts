@@ -40,8 +40,13 @@ export const env = {
   },
   anthropic: {
     apiKey: () => requireVar("ANTHROPIC_API_KEY"),
-    // Optional. Defaults to claude-sonnet-4-6 if unset.
+    // Optional. Defaults to claude-sonnet-4-6 if unset. Used by the deterministic
+    // pipeline's single-shot answer generation.
     model: () => readOptional("ANTHROPIC_MODEL") ?? "claude-sonnet-4-6",
+    // Model for the agentic reasoning loop (tool-calling). Defaults to the most
+    // capable Opus tier so the bot reasons over the data like a full chat model;
+    // override with ANTHROPIC_AGENT_MODEL if needed.
+    agentModel: () => readOptional("ANTHROPIC_AGENT_MODEL") ?? "claude-opus-4-8",
   },
   openai: {
     apiKey: () => requireVar("OPENAI_API_KEY"),
@@ -79,12 +84,13 @@ export const env = {
     // actually fires (only on low-confidence turns).
     llmToolChoice: () =>
       (readOptional("ASSISTANT_LLM_TOOL_CHOICE") ?? "false").toLowerCase() === "true",
-    // Opt-in: route turns through the full agentic tool-calling loop (the model
-    // chooses + chains tools and reasons over results) instead of the
-    // deterministic pipeline. DISABLED by default. Needs a strong reasoning model
-    // (set OPENAI_MODEL accordingly) and the OpenAI provider.
+    // Route turns through the full agentic tool-calling loop: the model chooses +
+    // chains tools and reasons over the raw data itself (like a normal chat model
+    // with the files attached), instead of the keyword-routed deterministic
+    // pipeline. ENABLED by default — this is the primary path. Set
+    // ASSISTANT_AGENT_MODE=false to fall back to the deterministic pipeline.
     agentMode: () =>
-      (readOptional("ASSISTANT_AGENT_MODE") ?? "false").toLowerCase() === "true",
+      (readOptional("ASSISTANT_AGENT_MODE") ?? "true").toLowerCase() === "true",
   },
   // Where the app's own data (document chunks, dossier, feedback, sync cursors)
   // is persisted. "local" = JSON/SQLite files on a writable disk (VPS, the

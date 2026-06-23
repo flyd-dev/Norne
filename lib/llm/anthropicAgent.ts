@@ -25,8 +25,12 @@ import type {
   AgentToolSchema,
 } from "@/lib/assistant/agent/loop";
 
-/** Bounded per-step output: tool args + final answers are small. */
-const MAX_TOKENS = 4096;
+/**
+ * Bounded per-step output. Tool-arg steps are tiny, but the final answer can be
+ * a full case/process assessment, so this is generous enough not to truncate it
+ * (well under the streaming threshold, so a non-streamed call won't time out).
+ */
+const MAX_TOKENS = 8192;
 
 /** AgentMessage[] → Claude messages, coalescing consecutive tool results. */
 function toAnthropicMessages(
@@ -74,7 +78,7 @@ function toAnthropicTools(tools: AgentToolSchema[]): Anthropic.Messages.Tool[] {
 /** Build an AgentModel backed by the Claude Messages API tool-use loop. */
 export function createAnthropicAgentModel(): AgentModel {
   const client = new Anthropic({ apiKey: env.anthropic.apiKey() });
-  const model = env.anthropic.model();
+  const model = env.anthropic.agentModel();
 
   return {
     async step({ system, messages, tools }): Promise<AgentStep> {
