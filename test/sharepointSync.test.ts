@@ -51,8 +51,8 @@ vi.mock("@/lib/documents/store", () => ({
 }));
 
 const indexed = vi.hoisted(() => ({
-  indexDocumentChunks: vi.fn(),
-  removeDocumentFromIndex: vi.fn(),
+  indexDocumentChunks: vi.fn(async () => {}),
+  removeDocumentFromIndex: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/rag/indexDocument", () => indexed);
 

@@ -37,7 +37,7 @@ export async function DELETE(
     await deleteDocument(id);
     // Best-effort: also drop the document's vectors from the semantic index.
     try {
-      removeDocumentFromIndex(id);
+      await removeDocumentFromIndex(id);
     } catch (error) {
       console.error(
         JSON.stringify({

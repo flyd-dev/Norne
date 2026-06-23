@@ -66,7 +66,7 @@ async function processItem(
   // Tombstone: the item was deleted/moved out — drop it from both stores.
   if (item.deleted) {
     await deleteDocument(documentId).catch(() => undefined);
-    removeDocumentFromIndex(documentId);
+    await removeDocumentFromIndex(documentId).catch(() => undefined);
     return { outcome: "removed" };
   }
   // Delta is a flat recursive feed; folders carry no content.

@@ -34,6 +34,7 @@ import {
   searchDocuments,
   MAX_CAPACITY_MATCHES,
   MAX_CASE_MATCHES,
+  MAX_CASE_MATCHES_WITH_DOSSIER,
   type DocumentMatch,
 } from "@/lib/rag/documentSearch";
 import { readDossier } from "@/lib/dossier/store";
@@ -863,16 +864,23 @@ export async function runChat(
   // terms (synonyms + category words) and an anchor toward the chart of accounts,
   // so the closest matching account is found even when the exact word is absent.
   const caseQuestion = isCaseQuestion(retrievalText);
+  // The resident case dossier is the bot's pre-analysed whole-case knowledge.
+  // Read it up front (cached in memory — no disk hit on a warm process) so a
+  // broad case question can lean on it instead of sweeping 40 chunks every time.
+  const dossier = caseQuestion ? await readDossier() : null;
   let matches: DocumentMatch[] = [];
   if (isProjectList) {
     // A combined project list answers from the structured projects field only —
     // no document chunks (they would just add noise and irrelevant sources).
     matches = [];
   } else if (caseQuestion && !intent.capacity) {
-    // Broad case/overview question: pull the widest set of chunks across all
-    // documents (the dossier injected below gives the big picture; these chunks
-    // give the supporting detail).
-    matches = await searchDocuments(retrievalText, { limit: MAX_CASE_MATCHES });
+    // Broad case/overview question. When the dossier is available it already
+    // carries the whole-case picture, so we only fetch a few supporting chunks
+    // for citations/detail (fast). Without a dossier, fall back to the wide
+    // 40-chunk sweep so breadth isn't lost.
+    matches = await searchDocuments(retrievalText, {
+      limit: dossier ? MAX_CASE_MATCHES_WITH_DOSSIER : MAX_CASE_MATCHES,
+    });
   } else if (intent.capacity) {
     // Staffing/capacity question: search the staffing plan aggressively. Boost
     // the bemanningsplan document, capacity-related sheets and role/month terms;
@@ -928,19 +936,19 @@ export async function runChat(
   }
 
   // Inject the whole-case dossier on case/overview questions, so the bot answers
-  // with the big picture in mind (and still cites the documents above).
-  if (caseQuestion) {
-    const dossier = await readDossier();
-    if (dossier) {
-      context.case_dossier = dossier.text;
-      notes.push(
-        'Dette gjelder Nornebygg-saken. Feltet "case_dossier" i konteksten er en ' +
-          "oversikt over hele saken — bruk den til å forstå helheten og svare på " +
-          'brede spørsmål. For konkrete detaljer, bygg på dokumentene ("documents") ' +
-          "og nevn hvilket dokument. Dossieret er et hjelpemiddel; ved juridiske " +
-          "konsekvenser eller tvil, vis til advokaten.",
-      );
-    }
+  // with its resident, pre-analysed case knowledge (read above, cached) and
+  // doesn't have to reconstruct the big picture from chunks every time.
+  if (caseQuestion && dossier) {
+    context.case_dossier = dossier.text;
+    notes.push(
+      'Dette gjelder Nornebygg/HEYAS-saken, og du står på lag med dette teamet. ' +
+        'Feltet "case_dossier" er ditt grundige, ferdig analyserte saksdossier — ' +
+        "sakens kjerne, parter, tidslinje, omtvistede punkter, styrker OG svakheter " +
+        "for HEYAS-siden, og status. Du KJENNER saken gjennom dette; svar raskt og " +
+        'presist ut fra det. For konkrete detaljer/sitater, bygg på dokumentene ("documents") ' +
+        "og nevn hvilket dokument. Vær ærlig også om det som ikke er i HEYAS' favør. " +
+        "Dossieret er et hjelpemiddel; ved juridiske vurderinger eller tvil, vis til advokaten.",
+    );
   }
 
   const documents: DocumentReference[] = matches.map((m) => ({

@@ -66,6 +66,12 @@ export const env = {
     // admin routes are disabled (not the chatbot). Never sent to the browser.
     uploadToken: () => readOptional("ADMIN_UPLOAD_TOKEN"),
   },
+  cron: {
+    // Secret for the scheduled cron route (/api/cron/sync). On Vercel, set this
+    // env var and Vercel Cron sends it automatically as a Bearer token; the
+    // route rejects requests without it. Unset = cron route disabled.
+    secret: () => readOptional("CRON_SECRET"),
+  },
   assistant: {
     // Opt-in: let the LLM refine the tool choice (within the deterministic
     // source-policy family) on low-confidence turns. DISABLED by default — the
@@ -80,18 +86,44 @@ export const env = {
     agentMode: () =>
       (readOptional("ASSISTANT_AGENT_MODE") ?? "false").toLowerCase() === "true",
   },
+  // Where the app's own data (document chunks, dossier, feedback, sync cursors)
+  // is persisted. "local" = JSON/SQLite files on a writable disk (VPS, the
+  // historical default). "cloud" = Turso (vectors/chunks) + Firestore (the small
+  // JSON stores) — required on serverless hosts like Vercel, which have no
+  // persistent filesystem. Project/account domain data is always in Firestore.
+  storeBackend: (): "local" | "cloud" => {
+    const raw = (readOptional("STORE_BACKEND") ?? "local").toLowerCase();
+    return raw === "cloud" ? "cloud" : "local";
+  },
   documents: {
     // Local JSON file holding uploaded-document metadata + chunks. Uploaded
     // documents are NOT stored in Firestore (Firestore is only project data).
+    // Used only by the "local" store backend.
     storePath: () =>
       readOptional("DOCUMENT_STORE_PATH") ??
       "/var/lib/norne-chatbot/knowledge-documents.json",
   },
+  turso: {
+    // Managed libSQL (SQLite-compatible) database holding chunk embeddings for
+    // semantic search on the "cloud" backend. Serverless-friendly (HTTP client),
+    // unlike better-sqlite3 which needs a native build + local file. Create a DB
+    // at turso.tech and read the URL/token from the dashboard or `turso db`.
+    url: () => readOptional("TURSO_DATABASE_URL"),
+    authToken: () => readOptional("TURSO_AUTH_TOKEN"),
+  },
   rag: {
+    // Which vector backend to use. "sqlite" = local better-sqlite3 + sqlite-vec
+    // file (VPS). "turso" = managed libSQL over HTTP (serverless/Vercel). Defaults
+    // to sqlite so existing VPS deployments are unchanged. The turso module is
+    // lazy-loaded, so better-sqlite3 is never imported when turso is selected.
+    vectorBackend: (): "sqlite" | "turso" => {
+      const raw = (readOptional("VECTOR_BACKEND") ?? "sqlite").toLowerCase();
+      return raw === "turso" ? "turso" : "sqlite";
+    },
     // Local SQLite (sqlite-vec) file holding chunk embeddings for semantic
     // search. Scales far past the in-memory JSON keyword index — used for large
     // corpora (e.g. a synced SharePoint library). Sibling of the JSON store by
-    // default. NOT in Firestore.
+    // default. NOT in Firestore. Used only by the "sqlite" vector backend.
     vectorStorePath: () =>
       readOptional("VECTOR_STORE_PATH") ??
       "/var/lib/norne-chatbot/vectors.db",

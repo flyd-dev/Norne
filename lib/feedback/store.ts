@@ -114,11 +114,38 @@ export function isFilesystemPermissionError(error: unknown): boolean {
   return code === "EACCES" || code === "EPERM" || code === "EROFS";
 }
 
+// --- Cloud (Turso) backend ------------------------------------------------
+// One row per feedback record; the sanitised record is stored as JSON text.
+let feedbackReady = false;
+async function feedbackTable() {
+  const { getTursoClient } = await import("@/lib/turso/client");
+  const c = await getTursoClient();
+  if (!feedbackReady) {
+    await c.execute(
+      `CREATE TABLE IF NOT EXISTS feedback (
+         id        INTEGER PRIMARY KEY AUTOINCREMENT,
+         timestamp TEXT NOT NULL,
+         record    TEXT NOT NULL
+       )`,
+    );
+    feedbackReady = true;
+  }
+  return c;
+}
+
 /** Append one sanitised feedback record. Returns the stored record. */
 export async function appendFeedback(
   input: FeedbackInput,
 ): Promise<FeedbackRecord> {
   const record = sanitize(input);
+  if (env.storeBackend() === "cloud") {
+    const c = await feedbackTable();
+    await c.execute({
+      sql: "INSERT INTO feedback(timestamp, record) VALUES (?, ?)",
+      args: [record.timestamp, JSON.stringify(record)],
+    });
+    return record;
+  }
   await withLock(async () => {
     const file = await readFeedbackFile();
     file.feedback.push(record);
@@ -129,6 +156,13 @@ export async function appendFeedback(
 
 /** List all feedback records, newest first. */
 export async function listFeedback(): Promise<FeedbackRecord[]> {
+  if (env.storeBackend() === "cloud") {
+    const c = await feedbackTable();
+    const res = await c.execute(
+      "SELECT record FROM feedback ORDER BY timestamp DESC",
+    );
+    return res.rows.map((r) => JSON.parse(String(r.record)) as FeedbackRecord);
+  }
   const file = await readFeedbackFile();
   return [...file.feedback].sort((a, b) =>
     b.timestamp.localeCompare(a.timestamp),

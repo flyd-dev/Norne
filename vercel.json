@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/sync",
+      "schedule": "0 3 * * *"
+    }
+  ],
+  "functions": {
+    "app/api/cron/sync/route.ts": { "maxDuration": 300 },
+    "app/api/admin/sharepoint/sync/route.ts": { "maxDuration": 300 },
+    "app/api/admin/dossier/route.ts": { "maxDuration": 300 }
+  }
+}

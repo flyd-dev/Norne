@@ -15,27 +15,32 @@ import { getAllChunks } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { writeDossier, type Dossier } from "@/lib/dossier/store";
 
-/** Total character budget for the synthesis input (~100k tokens of excerpts). */
-const TOTAL_BUDGET_CHARS = 400_000;
+/** Total character budget for the synthesis input (~150k tokens of excerpts). */
+const TOTAL_BUDGET_CHARS = 600_000;
 /** Hard per-document cap so one huge file can't crowd out the rest. */
-const PER_DOC_CAP_CHARS = 2_500;
+const PER_DOC_CAP_CHARS = 4_000;
 
-const DOSSIER_SYSTEM = `Du lager et strukturert SAKSDOSSIER for Nornebygg-teamet ut fra utdrag av alle sakens dokumenter. Skriv på norsk, og bygg KUN på det som faktisk står i utdragene.
+const DOSSIER_SYSTEM = `Du lager et grundig, gjennomarbeidet SAKSDOSSIER for Nornebygg- og HEYAS-siden (Hausvik Energy Yard AS, konsortiet Nornebygg/Fjellbygg er en del av) ut fra utdrag av alle sakens dokumenter. Du står på lag med dette teamet — målet er at de skal ha en dyp og realistisk forståelse av saken. Skriv på norsk, og bygg KUN på det som faktisk står i utdragene.
 
-Strukturér dossieret med disse overskriftene (utelat en seksjon hvis det ikke finnes grunnlag for den):
-- **Parter**: hvem er involvert (Nornebygg, motpart(er), rådgivere, offentlige instanser).
+Dette er ikke et overflatisk sammendrag. Les utdragene nøye, koble informasjon på tvers av dokumenter, og analyser saken grundig. Strukturér dossieret med disse overskriftene (utelat en seksjon hvis det ikke finnes grunnlag for den):
+- **Sakens kjerne**: hva handler saken egentlig om, kort og presist (2–4 setninger).
+- **Parter**: hvem er involvert (Nornebygg/HEYAS, motpart(er), rådgivere, offentlige instanser) og deres rolle.
 - **Tidslinje**: sentrale hendelser i kronologisk rekkefølge, med datoer der de finnes.
-- **Sentrale avtaler og dokumenter**: nøkkeldokumenter og hva de gjelder, med dokumentnavn.
-- **Omtvistede punkter**: hva saken/tvisten ser ut til å handle om.
+- **Sentrale avtaler og dokumenter**: nøkkeldokumenter, hva de regulerer og hvorfor de er viktige, med dokumentnavn.
+- **Omtvistede punkter**: hva partene er uenige om. For hvert punkt: gjengi kort hva HEYAS-siden anfører OG hva motparten anfører, slik det fremgår av dokumentene.
+- **Styrker for HEYAS-siden**: dokumenterte forhold som taler til teamets fordel, med kildehenvisning.
+- **Svakheter og risikoer for HEYAS-siden**: forhold som taler MOT teamet, ugunstige dokumenter, hull eller uklarheter i egen sak. Vær ærlig og direkte her — dette er det viktigste for at teamet skal være forberedt. Underslå ingenting ufordelaktig.
 - **Frister og forpliktelser**: datoer, frister eller plikter som nevnes.
+- **Åpne spørsmål**: hva er uklart, mangelfullt belyst eller motstridende i materialet.
 - **Status**: hvor saken ser ut til å stå nå.
 
 Regler:
 - Henvis til dokumentnavn når du oppgir et faktum (f.eks. «(Avtale med Windport Signert)»).
-- Finn ALDRI på fakta, datoer, beløp eller konklusjoner. Står det ikke i utdragene, ta det ikke med.
-- Gi ALDRI juridiske råd og spekuler ikke i utfall eller skyld. Dette er et oppslagsverk, ikke en vurdering.
-- Er noe uklart eller motstridende, si det kort.
-- Vær konsis og oversiktlig. Bruk punktlister.`;
+- Finn ALDRI på fakta, datoer, beløp eller konklusjoner. Står det ikke i utdragene, ta det ikke med. Pynt aldri på noe til fordel for HEYAS.
+- Vær ærlig også når faktum IKKE er i HEYAS' favør. En god støttespiller skjuler ikke svakheter — den synliggjør dem så teamet kan håndtere dem.
+- Gi ALDRI juridiske råd og konkludér ikke om endelig utfall eller skyld. Du kan analysere hva dokumentene viser av styrker og svakheter, men juridisk strategi og vurdering tilhører advokaten.
+- Er noe uklart eller motstridende, si det tydelig.
+- Vær grundig men oversiktlig. Bruk punktlister og korte forklaringer.`;
 
 /** Build per-document excerpts (name + leading text), within a total budget. */
 function buildInput(

@@ -20,7 +20,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   const { closeVectorStore } = await import("@/lib/rag/vectorStore");
-  closeVectorStore();
+  await closeVectorStore();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -40,7 +40,7 @@ describe("vectorStore", () => {
   it("upserts and finds the nearest vector", async () => {
     const store = await freshStore();
     await store.ensureVectorStore();
-    store.upsertDocumentChunks(
+    await store.upsertDocumentChunks(
       "doc1",
       [chunk(0, { text: "x axis" }), chunk(1, { text: "y axis" }), chunk(2, { text: "near x" })],
       [
@@ -49,9 +49,9 @@ describe("vectorStore", () => {
         [0.9, 0.1, 0],
       ],
     );
-    expect(store.vectorCount()).toBe(3);
+    expect(await store.vectorCount()).toBe(3);
 
-    const hits = store.searchVectors([1, 0, 0], 2);
+    const hits = await store.searchVectors([1, 0, 0], 2);
     expect(hits).toHaveLength(2);
     expect(hits[0].text).toBe("x axis");
     expect(hits[0].similarity).toBeGreaterThan(0.99);
@@ -61,36 +61,36 @@ describe("vectorStore", () => {
   it("replaces a document's chunks on re-upsert (no duplicates)", async () => {
     const store = await freshStore();
     await store.ensureVectorStore();
-    store.upsertDocumentChunks("doc1", [chunk(0)], [[1, 0, 0]]);
-    store.upsertDocumentChunks("doc1", [chunk(0), chunk(1)], [[1, 0, 0], [0, 1, 0]]);
-    expect(store.vectorCount()).toBe(2);
+    await store.upsertDocumentChunks("doc1", [chunk(0)], [[1, 0, 0]]);
+    await store.upsertDocumentChunks("doc1", [chunk(0), chunk(1)], [[1, 0, 0], [0, 1, 0]]);
+    expect(await store.vectorCount()).toBe(2);
   });
 
   it("deletes a document's vectors", async () => {
     const store = await freshStore();
     await store.ensureVectorStore();
-    store.upsertDocumentChunks(
+    await store.upsertDocumentChunks(
       "doc1",
       [chunk(0), chunk(1)],
       [[1, 0, 0], [0, 1, 0]],
     );
-    store.deleteDocumentVectors("doc1");
-    expect(store.vectorCount()).toBe(0);
-    expect(store.searchVectors([1, 0, 0], 5)).toHaveLength(0);
+    await store.deleteDocumentVectors("doc1");
+    expect(await store.vectorCount()).toBe(0);
+    expect(await store.searchVectors([1, 0, 0], 5)).toHaveLength(0);
   });
 
   it("rejects a dimension change without a rebuild", async () => {
     const store = await freshStore();
     await store.ensureVectorStore();
-    store.upsertDocumentChunks("doc1", [chunk(0)], [[1, 0, 0]]);
-    expect(() =>
+    await store.upsertDocumentChunks("doc1", [chunk(0)], [[1, 0, 0]]);
+    await expect(
       store.upsertDocumentChunks("doc2", [chunk(0)], [[1, 0, 0, 0]]),
-    ).toThrow(/dimension/i);
+    ).rejects.toThrow(/dimension/i);
   });
 
   it("returns 0 / empty when the store was never built", async () => {
     const store = await freshStore();
-    expect(store.vectorCount()).toBe(0);
-    expect(store.searchVectors([1, 0, 0], 5)).toHaveLength(0);
+    expect(await store.vectorCount()).toBe(0);
+    expect(await store.searchVectors([1, 0, 0], 5)).toHaveLength(0);
   });
 });

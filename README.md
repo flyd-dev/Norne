@@ -115,11 +115,26 @@ falling back to keyword search otherwise. Neither requires orchestrator changes.
   only pick up changes. Drive it with `node scripts/sync-sharepoint.mjs`. No paid
   Azure subscription — the app registration lives in Entra ID, included with the
   Microsoft 365 tenant that hosts SharePoint.
-- **Case dossier**: a whole-case overview synthesised across all indexed
-  documents in one LLM call (`node scripts/generate-dossier.mjs`), stored locally
-  (`DOSSIER_PATH`) and injected on case/overview questions (detected by phrasing)
-  alongside a wider chunk retrieval — so the bot has the big picture while still
-  citing the underlying documents. Regenerate after a sync.
+- **Storage backend**: the app's own data (document chunks + vectors, dossier,
+  feedback, sync cursors) is stored behind a `STORE_BACKEND` switch — `local`
+  (default: JSON + `sqlite-vec` files on the VPS) or `cloud` (everything the app
+  writes goes to **Turso**/libSQL), required on serverless hosts like **Vercel**.
+  Domain data (accounts/projects) stays in Firestore either way, so no Firebase
+  service account is needed. In cloud mode `better-sqlite3` is never imported
+  (the vector backend is lazy-loaded). To move from the VPS to Vercel, see
+  [docs/VERCEL-MIGRATION.md](docs/VERCEL-MIGRATION.md). The nightly refresh runs
+  via the `/api/cron/sync` Cron route on Vercel, or `scripts/nightly-update.sh`
+  on the VPS.
+- **Case dossier**: a deep, analysed whole-case overview synthesised across all
+  indexed documents in one LLM call (`node scripts/generate-dossier.mjs`), stored
+  locally (`DOSSIER_PATH`). It is the bot's resident case knowledge — cached in
+  memory (reloaded only when the file changes) and injected on case/overview
+  questions, so broad case answers come fast from the dossier (with a few
+  supporting chunks) instead of a 40-chunk sweep every time. Regenerate after a
+  sync; the nightly job below does this automatically when documents change.
+- **Nightly refresh** (`scripts/nightly-update.sh`): runs the SharePoint delta
+  sync, then regenerates the dossier when the corpus changed. Point the 03:00
+  crontab entry at this wrapper rather than calling the sync script directly.
 
 ---
 
