@@ -66,6 +66,12 @@ export const env = {
     // admin routes are disabled (not the chatbot). Never sent to the browser.
     uploadToken: () => readOptional("ADMIN_UPLOAD_TOKEN"),
   },
+  cron: {
+    // Secret for the scheduled cron route (/api/cron/sync). On Vercel, set this
+    // env var and Vercel Cron sends it automatically as a Bearer token; the
+    // route rejects requests without it. Unset = cron route disabled.
+    secret: () => readOptional("CRON_SECRET"),
+  },
   assistant: {
     // Opt-in: let the LLM refine the tool choice (within the deterministic
     // source-policy family) on low-confidence turns. DISABLED by default — the
