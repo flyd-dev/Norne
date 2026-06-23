@@ -15,7 +15,7 @@ reach the browser.
 - **Next.js (App Router)** + **TypeScript**
 - **Firebase Admin SDK** (preferred) or **Firestore REST API** (fallback)
 - **Pluggable LLM provider**: **OpenAI** or **Ollama** (local Llama)
-- **Document knowledge base**: upload PDF/DOCX/TXT/CSV/XLSX → hybrid retrieval (semantic vector search via embeddings, with keyword fallback), stored in a local JSON file + a local `sqlite-vec` index (not Firestore)
+- **Document knowledge base**: upload PDF/DOCX/PPTX/TXT/CSV/XLSX/MSG → hybrid retrieval (semantic vector search via embeddings, with keyword fallback), stored in a local JSON file + a local `sqlite-vec` index (not Firestore)
 - **SharePoint sync** (optional): pull a SharePoint document library into the knowledge base via Microsoft Graph (app-only auth), resumable + incremental
 - Server-side route at **`/api/chat`** + admin routes at **`/api/admin/documents`**
 - Simple React chat UI + protected admin upload page at **`/admin/documents`**
@@ -27,6 +27,8 @@ reach the browser.
 | `xlsx` (SheetJS, from the SheetJS CDN) | Parse XLSX spreadsheets (per-sheet text). Installed from `https://cdn.sheetjs.com/...` because the npm build has an unpatched high-severity advisory. |
 | `mammoth` | Extract raw text from DOCX files. |
 | `pdf-parse` | Extract text from PDF files (imported via its inner `lib/pdf-parse.js`). |
+| `adm-zip` | Read PPTX slide/notes XML (a .pptx is a zip) to extract text. |
+| `@kenjiuno/msgreader` | Extract subject/sender/body text from Outlook `.msg` files. |
 
 ---
 
@@ -63,7 +65,7 @@ lib/
     orchestrator.ts      retrieve relevant data + documents -> minimize -> call LLM
   documents/
     types.ts             document/chunk types + error types
-    extract.ts           text extraction (PDF/DOCX/TXT/CSV/XLSX)
+    extract.ts           text extraction (PDF/DOCX/PPTX/TXT/CSV/XLSX/MSG)
     chunk.ts             text chunking (size + overlap) + metadata
     store.ts             local JSON-file persistence (DOCUMENT_STORE_PATH)
   rag/
@@ -429,7 +431,7 @@ The bot can also answer from uploaded company documents (e.g. an Excel
 
 ### Supported file types
 
-**PDF, DOCX, TXT, CSV, XLSX.** Max **10 MB** per file; other types are rejected.
+**PDF, DOCX, PPTX, TXT, CSV, XLSX, MSG.** Max **10 MB** per file; other types are rejected.
 For XLSX, each sheet is extracted separately, preserving the sheet name, headers
 and row values (good for staffing plans / bemanningsplaner). Only the **extracted
 text/chunks are stored** — the original file is never persisted.

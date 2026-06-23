@@ -298,6 +298,78 @@ async function extractDocx(buffer: Buffer): Promise<string> {
   }
 }
 
+/** Decode the handful of XML entities that appear in Office text runs. */
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Extract slide + speaker-note text from a PPTX. A .pptx is a zip of XML; the
+ * visible text lives in <a:t> runs inside ppt/slides/slideN.xml (and notes in
+ * ppt/notesSlides/notesSlideN.xml). Slides are ordered by their number.
+ */
+async function extractPptx(buffer: Buffer): Promise<string> {
+  try {
+    const AdmZip = (await import("adm-zip")).default;
+    const zip = new AdmZip(buffer);
+    const slideEntries = zip
+      .getEntries()
+      .filter((e) =>
+        /^ppt\/(slides\/slide|notesSlides\/notesSlide)\d+\.xml$/.test(
+          e.entryName,
+        ),
+      )
+      .sort((a, b) => {
+        const n = (name: string) =>
+          Number.parseInt(name.match(/(\d+)\.xml$/)?.[1] ?? "0", 10);
+        return n(a.entryName) - n(b.entryName);
+      });
+
+    const parts: string[] = [];
+    for (const entry of slideEntries) {
+      const xml = entry.getData().toString("utf8");
+      const runs = xml.match(/<a:t>([\s\S]*?)<\/a:t>/g) ?? [];
+      const text = runs
+        .map((r) => decodeXmlEntities(r.replace(/<\/?a:t>/g, "")))
+        .join(" ")
+        .trim();
+      if (text) parts.push(text);
+    }
+    return parts.join("\n");
+  } catch {
+    throw new ExtractionError("Kunne ikke lese PPTX-filen.");
+  }
+}
+
+/** Extract subject, sender and body text from an Outlook .msg file. */
+async function extractMsg(buffer: Buffer): Promise<string> {
+  try {
+    const MsgReader = (await import("@kenjiuno/msgreader")).default;
+    // Copy into a standalone ArrayBuffer (Node Buffers share a pool).
+    const reader = new MsgReader(new Uint8Array(buffer).buffer);
+    const data = reader.getFileData() as {
+      subject?: string;
+      senderName?: string;
+      senderEmail?: string;
+      body?: string;
+    };
+    const header: string[] = [];
+    if (data.subject) header.push(`Emne: ${data.subject}`);
+    if (data.senderName || data.senderEmail) {
+      header.push(`Fra: ${data.senderName ?? ""} ${data.senderEmail ?? ""}`.trim());
+    }
+    const body = (data.body ?? "").trim();
+    return [header.join("\n"), body].filter(Boolean).join("\n\n");
+  } catch {
+    throw new ExtractionError("Kunne ikke lese MSG-filen.");
+  }
+}
+
 /**
  * Extract text from a document buffer based on its filename.
  * Throws UnsupportedFileTypeError or ExtractionError on failure.
@@ -337,6 +409,16 @@ export async function extractText(
       if (t.length > 0) structured = t;
       break;
     }
+    case "pptx": {
+      const text = await extractPptx(buffer);
+      segments = [{ text }];
+      const t = tablesFromText(text);
+      if (t.length > 0) structured = t;
+      break;
+    }
+    case "msg":
+      segments = [{ text: await extractMsg(buffer) }];
+      break;
   }
 
   const total = segments.reduce((n, s) => n + s.text.trim().length, 0);

@@ -21,7 +21,7 @@ interface FeedbackRecord {
 }
 
 const TOKEN_KEY = "norne_admin_token";
-const ACCEPT = ".pdf,.docx,.txt,.csv,.xlsx";
+const ACCEPT = ".pdf,.docx,.pptx,.txt,.csv,.xlsx,.msg";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -228,7 +228,7 @@ export default function AdminDocuments() {
             <span className="brand-rule" aria-hidden="true" />
             <div>
               <h1>Dokumentadministrasjon</h1>
-              <p>Last opp PDF, DOCX, TXT, CSV eller XLSX. Maks 10 MB per fil.</p>
+              <p>Last opp PDF, DOCX, PPTX, TXT, CSV, XLSX eller MSG. Maks 10 MB per fil.</p>
             </div>
           </div>
           <button className="clear-btn" onClick={lock}>
