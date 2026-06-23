@@ -101,3 +101,74 @@ export function isCapabilitiesQuestion(message: string): boolean {
   if (META_EXACT.has(normalized)) return true;
   return META_PATTERNS.some((re) => re.test(normalized));
 }
+
+/**
+ * Smalltalk / greetings: trivial conversational messages that are NOT data
+ * questions ("hei", "funker du", "takk"). Without this gate they fall through to
+ * the full pipeline and trigger document search + Endre — slow, and they cite
+ * irrelevant sources. Matched ONLY as the entire normalized message (exact set),
+ * so a real question like "funker budsjettet for 7100" is never swallowed.
+ */
+const SMALLTALK_GREETING = new Set([
+  "hei", "heisann", "hallo", "halla", "yo", "hei norne", "hei der",
+  "god morgen", "god dag", "god kveld", "morn", "morna",
+]);
+const SMALLTALK_WORKS = new Set([
+  "funker du", "fungerer du", "funker det", "fungerer det", "funker dette",
+  "er du der", "lever du", "er du på", "er du klar", "test", "testing",
+]);
+const SMALLTALK_THANKS = new Set([
+  "takk", "tusen takk", "takk skal du ha", "mange takk", "thanks", "takk for hjelpen",
+]);
+const SMALLTALK_ACK = new Set([
+  "ok", "okei", "okay", "greit", "skjønner", "skjonner", "ja", "nei", "supert", "flott",
+]);
+
+/** True when the whole message is trivial smalltalk (greeting/ack/thanks). */
+export function isSmalltalkMessage(message: string): boolean {
+  const n = normalizeForMeta(message);
+  if (!n) return false;
+  return (
+    SMALLTALK_GREETING.has(n) ||
+    SMALLTALK_WORKS.has(n) ||
+    SMALLTALK_THANKS.has(n) ||
+    SMALLTALK_ACK.has(n)
+  );
+}
+
+/** A short, friendly reply for a smalltalk message — no data, no sources. */
+export function smalltalkAnswer(message: string): string {
+  const n = normalizeForMeta(message);
+  if (SMALLTALK_WORKS.has(n)) return "Ja, jeg funker. Hva vil du sjekke?";
+  if (SMALLTALK_THANKS.has(n)) return "Bare hyggelig! Si ifra om det er noe mer.";
+  if (SMALLTALK_ACK.has(n)) return "👍 Si ifra om du lurer på noe.";
+  return "Hei! Jeg er Norne Assistant. Spør meg om prosjekter, dokumenter, kontoføring, bemanning eller saken — hva vil du vite?";
+}
+
+/**
+ * Broad, high-recall cue that a message is about Nornebygg's company data — the
+ * projects, accounting, capacity, documents, or the legal case. Used to decide
+ * whether to RETRIEVE (search documents / Endre / Firestore) or just answer
+ * conversationally like a normal chat. Deliberately generous: it should err
+ * toward "yes, this is about our data" so a real (keyword-light) question is
+ * never answered conversationally and left un-retrieved. The conversational
+ * fallback only fires when NONE of these appear AND there is no other signal.
+ */
+const DOMAIN_CUE =
+  /\b(prosjekt\w*|project\w*|konto\w*|regnskap\w*|budsjett\w*|kostnad\w*|faktura\w*|fakturert|kontrakt\w*|resultat\w*|inntekt\w*|beløp|betal\w*|mengde\w*|kvantum|antall|time\w*|rolle\w*|fag|bemann\w*|kapasitet\w*|rotasjon\w*|ressurs\w*|endre|dokument\w*|vedlegg\w*|fil(?:en|er|ene)?|excel|pdf|word|sak\w*|saken|tvist\w*|rettssak\w*|hovedforhandling|stevning\w*|tilsvar\w*|motkrav\w*|erstatning\w*|opsjon\w*|avtale\w*|intensjonsavtale|frist\w*|forpliktelse\w*|møte\w*|referat\w*|korrespondanse|motpart\w*|advokat\w*|krav\w*|leie\w*|eiendom\w*|areal\w*|tomt\w*|tidslinje\w*|kommun\w*|lyngdal|hausvik|heyas|nornebygg|fjellbygg|velde|windport|forhandlingsutvalg\w*|formannskap\w*)\b/i;
+
+/**
+ * True when the message references the company-data domain (projects, accounting,
+ * capacity, documents, or the case). High recall on purpose.
+ */
+export function mentionsCompanyDomain(message: string): boolean {
+  return DOMAIN_CUE.test(message);
+}
+
+/** System prompt for the conversational (no-retrieval) path. */
+export const CONVERSATION_SYSTEM = `Du er Norne Assistant, en intern assistent for Nornebygg. Dette er en vanlig samtalemelding som ikke handler om konkrete firmadata, så svar kort og naturlig som i en vanlig chat — uten å slå opp i dokumenter, prosjekter eller andre kilder.
+
+- Svar på norsk (eller brukerens språk).
+- IKKE finn på firmadata, tall, prosjekter, dokumentinnhold eller fakta om saken. Har du ikke fått dem i denne meldingen, har du dem ikke.
+- Hvis brukeren ser ut til å ville vite noe om et prosjekt, et dokument, kontoføring, bemanning/kapasitet eller Nornebygg-saken, be dem si det konkret — da slår du det opp.
+- Vær vennlig og kortfattet.`;

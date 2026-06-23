@@ -19,6 +19,8 @@ import { expandGlossaryTerms } from "@/lib/chat/domainGlossary";
 
 export type Route =
   | "capabilities_help"
+  | "smalltalk"
+  | "conversation"
   | "clarification"
   | "account_lookup"
   | "account_list"
