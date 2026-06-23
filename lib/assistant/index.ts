@@ -39,9 +39,10 @@ export async function runAssistantTurn(
   options: RunChatOptions = {},
 ): Promise<ChatResult> {
   if (env.assistant.agentMode()) {
-    // The agent loop has its own (non-streaming) path; options are ignored.
+    // The agent reasons + chains tools, then streams its final answer through
+    // options.onToken (progressive render), so the streaming contract is kept.
     const { runAgentTurn } = await import("@/lib/assistant/agent/run");
-    return runAgentTurn(message, requestId, history);
+    return runAgentTurn(message, requestId, history, undefined, options);
   }
   return runChat(message, requestId, history, options);
 }

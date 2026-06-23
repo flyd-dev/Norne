@@ -4,7 +4,7 @@
  * deeper logic migration happens behind this seam without changing callers.)
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/chat/orchestrator", () => ({
   runChat: vi.fn(async (message: string, requestId: string) => ({
@@ -21,6 +21,12 @@ import { runAssistantTurn } from "@/lib/assistant";
 import { runChat } from "@/lib/chat/orchestrator";
 
 describe("runAssistantTurn", () => {
+  // This suite tests the deterministic orchestrator delegation (runChat is
+  // mocked); pin the deterministic path since agent mode is the runtime default.
+  beforeEach(() => {
+    process.env.ASSISTANT_AGENT_MODE = "false";
+  });
+
   it("delegates to the orchestrator and returns its result", async () => {
     const r = await runAssistantTurn("hei", "req", []);
     expect(r.answer).toBe("svar:hei");

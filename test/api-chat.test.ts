@@ -20,6 +20,9 @@ function postRequest(body: unknown, raw = false) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // These tests exercise the deterministic orchestrator delegation (runChat is
+  // mocked), so pin the deterministic path — agent mode is the runtime default.
+  process.env.ASSISTANT_AGENT_MODE = "false";
   // Valid REST-mode config so validateEnv passes for the non-validation tests.
   // Anthropic is the default provider, so its key must be present.
   process.env.ANTHROPIC_API_KEY = "test-anthropic-key";

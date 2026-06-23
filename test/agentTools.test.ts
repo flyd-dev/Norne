@@ -51,6 +51,7 @@ function deps(over: Partial<AgentDeps> = {}): AgentDeps {
     getQuantities: async () => [],
     listDocuments: async () => [],
     searchDocuments: async () => [],
+    readCaseDossier: async () => null,
     endreClient: null,
     ...over,
   };
