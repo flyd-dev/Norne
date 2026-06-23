@@ -36,7 +36,7 @@ export async function indexDocumentChunks(
   await ensureVectorStore();
 
   if (chunks.length === 0) {
-    deleteDocumentVectors(documentId);
+    await deleteDocumentVectors(documentId);
     return;
   }
 
@@ -59,13 +59,13 @@ export async function indexDocumentChunks(
     }
   }
 
-  upsertDocumentChunks(documentId, upserts, vectors);
+  await upsertDocumentChunks(documentId, upserts, vectors);
 }
 
 /** Remove a document's vectors (call when a document is deleted). */
-export function removeDocumentFromIndex(documentId: string): void {
+export async function removeDocumentFromIndex(documentId: string): Promise<void> {
   if (!embeddingsEnabled()) return;
-  deleteDocumentVectors(documentId);
+  await deleteDocumentVectors(documentId);
 }
 
 export interface ReindexResult {

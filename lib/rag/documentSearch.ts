@@ -156,7 +156,7 @@ async function semanticSearch(
 ): Promise<DocumentMatch[]> {
   const queryVec = await embedQuery(query);
   // Over-fetch so metadata boosts/excludes can re-rank a wider candidate set.
-  const candidates = searchVectors(queryVec, Math.max(opts.limit * 4, 24));
+  const candidates = await searchVectors(queryVec, Math.max(opts.limit * 4, 24));
 
   const scored: DocumentMatch[] = [];
   for (const c of candidates) {
@@ -197,7 +197,7 @@ export async function searchDocuments(
 
   if (embeddingsEnabled()) {
     try {
-      if (vectorCount() > 0) {
+      if ((await vectorCount()) > 0) {
         const results = await semanticSearch(query, opts);
         if (results.length > 0) return results;
       }
