@@ -119,6 +119,12 @@ export async function appendFeedback(
   input: FeedbackInput,
 ): Promise<FeedbackRecord> {
   const record = sanitize(input);
+  if (env.storeBackend() === "cloud") {
+    const { getAdminFirestore } = await import("@/lib/firebaseAdmin");
+    const { APP_COLLECTIONS } = await import("@/lib/firestore/appStore");
+    await getAdminFirestore().collection(APP_COLLECTIONS.feedback).add({ ...record });
+    return record;
+  }
   await withLock(async () => {
     const file = await readFeedbackFile();
     file.feedback.push(record);
@@ -129,6 +135,15 @@ export async function appendFeedback(
 
 /** List all feedback records, newest first. */
 export async function listFeedback(): Promise<FeedbackRecord[]> {
+  if (env.storeBackend() === "cloud") {
+    const { getAdminFirestore } = await import("@/lib/firebaseAdmin");
+    const { APP_COLLECTIONS } = await import("@/lib/firestore/appStore");
+    const snap = await getAdminFirestore()
+      .collection(APP_COLLECTIONS.feedback)
+      .orderBy("timestamp", "desc")
+      .get();
+    return snap.docs.map((d) => d.data() as FeedbackRecord);
+  }
   const file = await readFeedbackFile();
   return [...file.feedback].sort((a, b) =>
     b.timestamp.localeCompare(a.timestamp),

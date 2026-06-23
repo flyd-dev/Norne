@@ -1,10 +1,11 @@
 /**
- * Local persistence for the generated case dossier.
+ * Persistence for the generated case dossier — one small structured overview of
+ * the whole case, injected into the chat context on case/overview questions.
  *
- * The dossier is a single structured overview of the whole case, synthesised
- * across all indexed documents. It is stored as one small JSON file (DOSSIER_PATH)
- * — same local-file approach as the document/feedback stores, NOT Firestore — and
- * injected into the chat context on case/overview questions.
+ * Backend selected by STORE_BACKEND:
+ *   - "local" (default): a single JSON file (DOSSIER_PATH) on the VPS disk,
+ *     with an mtime-keyed in-memory cache so it isn't re-read every turn.
+ *   - "cloud": a single Firestore document (serverless / Vercel).
  *
  * Server-side only.
  */
@@ -23,6 +24,8 @@ export interface Dossier {
   text: string;
 }
 
+const DOSSIER_DOC_ID = "dossier";
+
 function dossierPath(): string {
   return env.dossier.storePath();
 }
@@ -39,6 +42,14 @@ let cache: { mtimeMs: number; dossier: Dossier | null } | null = null;
 
 /** Read the stored dossier, or null if none has been generated yet. */
 export async function readDossier(): Promise<Dossier | null> {
+  if (env.storeBackend() === "cloud") {
+    const { readStateDoc } = await import("@/lib/firestore/appStore");
+    return readStateDoc<Dossier>(DOSSIER_DOC_ID);
+  }
+  return readDossierLocal();
+}
+
+async function readDossierLocal(): Promise<Dossier | null> {
   let mtimeMs: number;
   try {
     mtimeMs = (await stat(dossierPath())).mtimeMs;
@@ -68,8 +79,17 @@ export async function readDossier(): Promise<Dossier | null> {
   }
 }
 
-/** Persist the dossier (atomic write) and refresh the in-memory cache. */
+/** Persist the dossier. */
 export async function writeDossier(dossier: Dossier): Promise<void> {
+  if (env.storeBackend() === "cloud") {
+    const { writeStateDoc } = await import("@/lib/firestore/appStore");
+    await writeStateDoc(DOSSIER_DOC_ID, { ...dossier });
+    return;
+  }
+  await writeDossierLocal(dossier);
+}
+
+async function writeDossierLocal(dossier: Dossier): Promise<void> {
   const path = dossierPath();
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;

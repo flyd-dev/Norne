@@ -1,12 +1,16 @@
 /**
- * Local filesystem persistence for the document knowledge base.
+ * Persistence for the document knowledge base (metadata + extracted chunks +
+ * structured tables). Only extracted text is stored; the original uploaded file
+ * is never persisted.
  *
- * Uploaded documents are stored as a single JSON file on the server
- * (DOCUMENT_STORE_PATH, default /var/lib/norne-chatbot/knowledge-documents.json)
- * — NOT in Firestore. Firestore remains in use only for project data.
+ * Backend selected by STORE_BACKEND:
+ *   - "local" (default): a single JSON file on the server (DOCUMENT_STORE_PATH,
+ *     default /var/lib/norne-chatbot/knowledge-documents.json). NOT Firestore.
+ *   - "cloud": one Firestore document per knowledge document (serverless /
+ *     Vercel), in the norne_knowledge_documents collection.
  *
- * Only extracted text/chunks are stored; the original uploaded file is never
- * persisted. The store directory is created automatically if missing.
+ * (Domain Firestore — accounts/projects — is unrelated and read via
+ * lib/firestore/service.ts.)
  */
 
 import "server-only";
@@ -38,6 +42,27 @@ interface StoreFile {
 
 function storePath(): string {
   return env.documents.storePath();
+}
+
+function useCloud(): boolean {
+  return env.storeBackend() === "cloud";
+}
+
+// --- Cloud (Firestore) backend -------------------------------------------
+// One Firestore document per knowledge document. Firestore caps a document at
+// ~1 MB, so a single source file whose extracted chunks exceed that will throw
+// a clear error on save rather than truncating silently.
+const FIRESTORE_DOC_LIMIT_BYTES = 1_000_000;
+
+async function cloudCollection() {
+  const { getAdminFirestore } = await import("@/lib/firebaseAdmin");
+  const { APP_COLLECTIONS } = await import("@/lib/firestore/appStore");
+  return getAdminFirestore().collection(APP_COLLECTIONS.documents);
+}
+
+async function readAllCloudDocuments(): Promise<StoredDocument[]> {
+  const snap = await (await cloudCollection()).get();
+  return snap.docs.map((d) => d.data() as StoredDocument);
 }
 
 async function readStore(): Promise<StoreFile> {
@@ -88,26 +113,43 @@ export async function saveDocument(
   chunks: DocumentChunk[],
   structured?: StructuredTable[],
 ): Promise<void> {
+  const doc: StoredDocument = {
+    id: meta.id,
+    name: meta.name,
+    fileType: meta.fileType,
+    uploadedAt: meta.uploadedAt,
+    chunkCount: chunks.length,
+    chunks,
+    ...(structured && structured.length > 0 ? { structured } : {}),
+  };
+
+  if (useCloud()) {
+    const size = Buffer.byteLength(JSON.stringify(doc), "utf8");
+    if (size > FIRESTORE_DOC_LIMIT_BYTES) {
+      throw new Error(
+        `Document "${meta.name}" is ${(size / 1e6).toFixed(2)} MB of extracted ` +
+          `text — over Firestore's ~1 MB per-document limit. Cannot store it in ` +
+          `the cloud backend.`,
+      );
+    }
+    await (await cloudCollection()).doc(meta.id).set(doc);
+    return;
+  }
+
   await withLock(async () => {
     const store = await readStore();
     const documents = store.documents.filter((d) => d.id !== meta.id);
-    documents.push({
-      id: meta.id,
-      name: meta.name,
-      fileType: meta.fileType,
-      uploadedAt: meta.uploadedAt,
-      chunkCount: chunks.length,
-      chunks,
-      ...(structured && structured.length > 0 ? { structured } : {}),
-    });
+    documents.push(doc);
     await writeStore({ documents });
   });
 }
 
 /** List all knowledge documents (metadata only), newest first. */
 export async function listDocuments(): Promise<DocumentRecord[]> {
-  const store = await readStore();
-  return store.documents
+  const documents = useCloud()
+    ? await readAllCloudDocuments()
+    : (await readStore()).documents;
+  return documents
     .map((d) => ({
       id: d.id,
       name: d.name,
@@ -120,6 +162,10 @@ export async function listDocuments(): Promise<DocumentRecord[]> {
 
 /** Delete a document and its chunks. */
 export async function deleteDocument(id: string): Promise<void> {
+  if (useCloud()) {
+    await (await cloudCollection()).doc(id).delete();
+    return;
+  }
   await withLock(async () => {
     const store = await readStore();
     const documents = store.documents.filter((d) => d.id !== id);
@@ -129,9 +175,11 @@ export async function deleteDocument(id: string): Promise<void> {
 
 /** Load every stored structured staffing/capacity table across all documents. */
 export async function getStructuredTables(): Promise<StoredStructuredTable[]> {
-  const store = await readStore();
+  const documents = useCloud()
+    ? await readAllCloudDocuments()
+    : (await readStore()).documents;
   const all: StoredStructuredTable[] = [];
-  for (const doc of store.documents) {
+  for (const doc of documents) {
     for (const table of doc.structured ?? []) {
       all.push({ ...table, documentId: doc.id, documentName: doc.name });
     }
@@ -156,9 +204,11 @@ export async function getCapacityRows(): Promise<
 
 /** Load every stored chunk across all documents (for keyword search). */
 export async function getAllChunks(): Promise<StoredChunk[]> {
-  const store = await readStore();
+  const documents = useCloud()
+    ? await readAllCloudDocuments()
+    : (await readStore()).documents;
   const all: StoredChunk[] = [];
-  for (const doc of store.documents) {
+  for (const doc of documents) {
     for (const c of doc.chunks) {
       all.push({
         documentId: c.documentId,
