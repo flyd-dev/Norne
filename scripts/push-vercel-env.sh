@@ -20,18 +20,67 @@ ENV_FILE="$ROOT/.env.local"
 VERCEL="npx vercel@latest"
 
 # Variablene som skal pushes. Hold denne lista i sync med lib/env.ts.
+# Variabler som mangler/er tomme i .env.local hoppes trygt over (se loopen under),
+# så lista kan være full uten å feile. LOKAL-spesifikke filstier (DOCUMENT_STORE_PATH,
+# VECTOR_STORE_PATH, DOSSIER_PATH, *_STATE_PATH) og Ollama-variabler er BEVISST
+# utelatt — Vercel kjører cloud-backend (Turso + Firestore), ikke lokal disk.
 VARS=(
+  # --- Sidens passordlås (PÅKREVD i produksjon — ellers låser siden seg) ---
+  SITE_AUTH_USER
+  SITE_AUTH_PASSWORD
+  SITE_AUTH_SECRET
+
+  # --- LLM-leverandør ---
   LLM_PROVIDER
   ANTHROPIC_API_KEY
   ANTHROPIC_MODEL
+  ANTHROPIC_AGENT_MODEL
+  DOSSIER_MODEL
   OPENAI_API_KEY
   OPENAI_MODEL
+
+  # --- Assistent-oppførsel ---
+  ASSISTANT_AGENT_MODE
   ASSISTANT_LLM_TOOL_CHOICE
-  ADMIN_UPLOAD_TOKEN
-  ENDRE_API_ENABLED
+
+  # --- Lagringsbackend (Vercel = cloud) ---
+  STORE_BACKEND
+  VECTOR_BACKEND
+  TURSO_DATABASE_URL
+  TURSO_AUTH_TOKEN
+
+  # --- Embeddings ---
+  EMBEDDINGS_PROVIDER
+  EMBEDDINGS_MODEL
+  VOYAGE_API_KEY
+  VOYAGE_BASE_URL
+
+  # --- Firestore (Admin SDK) ---
   FIREBASE_PROJECT_ID
   FIREBASE_CLIENT_EMAIL
   FIREBASE_PRIVATE_KEY
+
+  # --- Admin + cron ---
+  ADMIN_UPLOAD_TOKEN
+  CRON_SECRET
+
+  # --- SharePoint-synk (valgfri) ---
+  SHAREPOINT_ENABLED
+  SHAREPOINT_TENANT_ID
+  SHAREPOINT_CLIENT_ID
+  SHAREPOINT_CLIENT_SECRET
+  SHAREPOINT_SITE
+  SHAREPOINT_DRIVES
+  SHAREPOINT_FOLDER
+  SHAREPOINT_MAX_FILE_MB
+
+  # --- Endre-integrasjon (valgfri) ---
+  ENDRE_API_ENABLED
+  ENDRE_API_BASE_URL
+  ENDRE_API_USERNAME
+  ENDRE_API_PASSWORD
+  ENDRE_API_CLIENT_ID
+  ENDRE_API_CLIENT_SECRET
 )
 
 if [[ ! -f "$ENV_FILE" ]]; then
