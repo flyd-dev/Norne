@@ -440,8 +440,8 @@ export default function Chat() {
             />
             <span className="brand-rule" aria-hidden="true" />
             <div>
-              <h1>Norne Assistent</h1>
-              <p>Spør om prosjekter, dokumenter, budsjettlinjer og mengder.</p>
+              <h1>Norne</h1>
+              <p>Din assistent for prosjekter, dokumenter, budsjettlinjer og mengder.</p>
               <p className="brandline">Robust. Presis. Tilstede.</p>
             </div>
           </div>
@@ -463,8 +463,8 @@ export default function Chat() {
                 <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
                 <span className="ld-line" />
               </div>
-              <h2>Norne Assistent</h2>
-              <p>Spør om prosjekter, bemanning, dokumenter og saken — eller få hjelp med tekst og oppgaver.</p>
+              <h2>Norne</h2>
+              <p>Din assistent for prosjekter, bemanning, dokumenter og saken — eller hjelp med tekst og oppgaver.</p>
               <div className="chips">
                 {EXAMPLES.map((q) => (
                   <button
@@ -483,7 +483,7 @@ export default function Chat() {
             <div className={`row ${m.role}`} key={i}>
               <div className="bubble">
                 <div className="role">
-                  {m.role === "user" ? "Deg" : "Norne Assistent"}
+                  {m.role === "user" ? "Deg" : "Norne"}
                 </div>
 
                 {m.role === "assistant" ? (

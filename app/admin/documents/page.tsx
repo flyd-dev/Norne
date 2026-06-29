@@ -1,7 +1,7 @@
 import AdminDocuments from "@/components/AdminDocuments";
 
 export const metadata = {
-  title: "Dokumentadministrasjon — Norne Assistent",
+  title: "Dokumentadministrasjon — Norne",
 };
 
 export default function AdminDocumentsPage() {

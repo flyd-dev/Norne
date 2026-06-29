@@ -1,7 +1,7 @@
 import LoginForm from "./LoginForm";
 
 export const metadata = {
-  title: "Logg inn — Norne Assistent",
+  title: "Logg inn — Norne",
 };
 
 export default async function LoginPage({
