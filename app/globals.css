@@ -186,6 +186,30 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- Logo divider (gold rune + rules) ---------- */
+.logo-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 20px;
+}
+
+.logo-divider .ld-line {
+  flex: 1;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.logo-divider .ld-mark {
+  flex: none;
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
 /* ---------- Messages ---------- */
 .messages {
   flex: 1;
@@ -858,6 +882,13 @@ body {
   }
   .send-btn {
     padding: 11px 16px;
+  }
+  .logo-divider {
+    max-width: 260px;
+    gap: 12px;
+  }
+  .logo-divider .ld-mark {
+    height: 20px;
   }
 }
 

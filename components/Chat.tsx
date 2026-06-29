@@ -458,6 +458,11 @@ export default function Chat() {
         <div className="messages" ref={listRef} aria-live="polite">
           {isEmpty && (
             <div className="empty">
+              <div className="logo-divider" aria-hidden="true">
+                <span className="ld-line" />
+                <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
+                <span className="ld-line" />
+              </div>
               <h2>Norne Assistent</h2>
               <p>Spør om prosjekter, bemanning, dokumenter og saken — eller få hjelp med tekst og oppgaver.</p>
               <div className="chips">
