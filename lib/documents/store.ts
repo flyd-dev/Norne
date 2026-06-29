@@ -74,12 +74,33 @@ async function kbTable() {
   return c;
 }
 
-async function readAllCloudDocuments(): Promise<StoredDocument[]> {
+/** Document metadata only (no chunk text) — small, fast, reliable. */
+type CloudDocMeta = Omit<StoredDocument, "chunks" | "structured">;
+
+async function readCloudDocMeta(): Promise<CloudDocMeta[]> {
   const c = await kbTable();
   const res = await c.execute(
-    "SELECT id, name, fileType, uploadedAt, chunkCount, chunks, structured FROM kb_documents",
+    "SELECT id, name, fileType, uploadedAt, chunkCount FROM kb_documents",
   );
   return res.rows.map((r) => ({
+    id: String(r.id),
+    name: String(r.name),
+    fileType: String(r.fileType),
+    uploadedAt: String(r.uploadedAt),
+    chunkCount: Number(r.chunkCount),
+  }));
+}
+
+/** Full record (chunks + structured) for ONE cloud document. */
+async function readCloudDocument(id: string): Promise<StoredDocument | null> {
+  const c = await kbTable();
+  const res = await c.execute({
+    sql: "SELECT id, name, fileType, uploadedAt, chunkCount, chunks, structured FROM kb_documents WHERE id = ?",
+    args: [id],
+  });
+  const r = res.rows[0];
+  if (!r) return null;
+  return {
     id: String(r.id),
     name: String(r.name),
     fileType: String(r.fileType),
@@ -89,7 +110,21 @@ async function readAllCloudDocuments(): Promise<StoredDocument[]> {
     ...(r.structured != null
       ? { structured: JSON.parse(String(r.structured)) as StructuredTable[] }
       : {}),
-  }));
+  };
+}
+
+/**
+ * Full records for every cloud document, fetched PER DOCUMENT so no single query
+ * has to return the entire corpus's chunk text at once. A single
+ * `SELECT *, chunks FROM kb_documents` returns several MB across ~thousands of
+ * chunks and is slow/unreliable in a serverless function (observed: 256s then an
+ * empty result, blocking dossier generation). One bounded query per document is
+ * reliable; the per-doc responses run concurrently.
+ */
+async function readAllCloudDocuments(): Promise<StoredDocument[]> {
+  const meta = await readCloudDocMeta();
+  const docs = await Promise.all(meta.map((m) => readCloudDocument(m.id)));
+  return docs.filter((d): d is StoredDocument => d !== null);
 }
 
 async function readStore(): Promise<StoreFile> {
@@ -184,8 +219,9 @@ export async function saveDocument(
 
 /** List all knowledge documents (metadata only), newest first. */
 export async function listDocuments(): Promise<DocumentRecord[]> {
+  // Metadata only — never load chunk text just to list documents.
   const documents = useCloud()
-    ? await readAllCloudDocuments()
+    ? await readCloudDocMeta()
     : (await readStore()).documents;
   return documents
     .map((d) => ({
@@ -212,10 +248,30 @@ export async function deleteDocument(id: string): Promise<void> {
   });
 }
 
+/** id/name/structured for cloud docs that have structured tables (skips the
+ * heavy chunk text — capacity questions only need the structured tables). */
+async function readCloudStructured(): Promise<
+  Pick<StoredDocument, "id" | "name" | "structured">[]
+> {
+  const c = await kbTable();
+  const res = await c.execute(
+    "SELECT id, name, structured FROM kb_documents WHERE structured IS NOT NULL",
+  );
+  return res.rows.map((r) => ({
+    id: String(r.id),
+    name: String(r.name),
+    structured:
+      r.structured != null
+        ? (JSON.parse(String(r.structured)) as StructuredTable[])
+        : undefined,
+  }));
+}
+
 /** Load every stored structured staffing/capacity table across all documents. */
 export async function getStructuredTables(): Promise<StoredStructuredTable[]> {
+  // Only the structured column is needed — don't pull every chunk's text.
   const documents = useCloud()
-    ? await readAllCloudDocuments()
+    ? await readCloudStructured()
     : (await readStore()).documents;
   const all: StoredStructuredTable[] = [];
   for (const doc of documents) {
