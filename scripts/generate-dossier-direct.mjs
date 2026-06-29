@@ -20,7 +20,33 @@ import { createClient } from "@libsql/client";
 import OpenAI from "openai";
 
 const TOTAL_BUDGET_CHARS = 600_000;
-const PER_DOC_CAP_CHARS = 4_000;
+const PER_DOC_MIN_CHARS = 400;
+const PER_DOC_CAP_CHARS = 40_000;
+const DOSSIER_MAX_TOKENS = 16_000;
+
+/** Mirror of lib/dossier/generate.ts selectExcerpt: whole doc if it fits, else
+ * chunks sampled evenly across the document (not just the opening). */
+function selectExcerpt(chunks, budget) {
+  const ordered = [...chunks].sort((a, b) => a.i - b.i);
+  const whole = ordered.map((c) => c.text).join("\n");
+  if (whole.length <= budget) return whole.trim();
+  const avg = whole.length / ordered.length;
+  const want = Math.max(1, Math.min(ordered.length, Math.floor(budget / Math.max(1, avg))));
+  const step = ordered.length / want;
+  const picked = [];
+  const seen = new Set();
+  let used = 0;
+  for (let k = 0; k < want; k++) {
+    const idx = Math.min(ordered.length - 1, Math.floor(k * step));
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    const t = ordered[idx].text;
+    if (used + t.length > budget && picked.length) break;
+    picked.push(t);
+    used += t.length + 1;
+  }
+  return picked.join("\n…\n").slice(0, budget).trim();
+}
 
 const DOSSIER_SYSTEM = `Du lager et grundig, gjennomarbeidet SAKSDOSSIER for Nornebygg- og HEYAS-siden (Hausvik Energy Yard AS, konsortiet Nornebygg/Fjellbygg er en del av) ut fra utdrag av alle sakens dokumenter. Du står på lag med dette teamet — målet er at de skal ha en dyp og realistisk forståelse av saken. Skriv på norsk, og bygg KUN på det som faktisk står i utdragene.
 
@@ -71,30 +97,38 @@ if (docCount === 0) {
   process.exit(1);
 }
 
-const perDoc = Math.min(PER_DOC_CAP_CHARS, Math.max(400, Math.floor(TOTAL_BUDGET_CHARS / docCount)));
+const perDoc = Math.min(PER_DOC_CAP_CHARS, Math.max(PER_DOC_MIN_CHARS, Math.floor(TOTAL_BUDGET_CHARS / docCount)));
 const parts = [];
 for (const [name, chunks] of byDoc) {
-  const text = chunks.sort((a, b) => a.i - b.i).map((c) => c.text).join("\n").slice(0, perDoc).trim();
+  const text = selectExcerpt(chunks, perDoc);
   if (text) parts.push(`### ${name}\n${text}`);
 }
 const input = parts.join("\n\n");
 console.log(`Bygde input fra ${docCount} dokumenter (${input.length} tegn). Kaller ${model}…`);
 
+// gpt-5.x is a reasoning model → max_completion_tokens (not max_tokens).
+const isReasoning = /^(gpt-5|o\d)/i.test(model.trim());
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const completion = await openai.chat.completions.create({
   model,
+  ...(isReasoning ? { max_completion_tokens: DOSSIER_MAX_TOKENS } : { max_tokens: DOSSIER_MAX_TOKENS }),
   messages: [
     { role: "system", content: DOSSIER_SYSTEM },
     { role: "user", content: `DOKUMENTUTDRAG:\n\n${input}` },
   ],
 });
-const text = (completion.choices[0]?.message?.content ?? "").trim();
+const choice = completion.choices[0];
+const text = (choice?.message?.content ?? "").trim();
 if (!text) {
   console.error("LLM returnerte tom tekst.");
   process.exit(1);
 }
+const truncated = choice?.finish_reason === "length";
+if (truncated) {
+  console.warn(`⚠️  Dossier nådde output-taket (${DOSSIER_MAX_TOKENS} tokens) — teksten kan være avkortet. Vurder å øke DOSSIER_MAX_TOKENS.`);
+}
 
-const dossier = { generatedAt: new Date().toISOString(), documentCount: docCount, text };
+const dossier = { generatedAt: new Date().toISOString(), documentCount: docCount, text, ...(truncated ? { truncated: true } : {}) };
 await db.execute("CREATE TABLE IF NOT EXISTS app_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
 await db.execute({
   sql: "INSERT INTO app_kv(key, value) VALUES ('dossier', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

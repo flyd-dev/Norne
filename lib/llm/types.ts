@@ -16,6 +16,24 @@ export interface GenerateAnswerInput {
   userPrompt: string;
   /** The raw retrieved context object (available to providers if useful). */
   context: unknown;
+  /**
+   * Optional per-call output cap (tokens). When unset the provider uses its own
+   * bounded default (short grounded answers). The case-dossier synthesis sets a
+   * much higher value so a thorough multi-section overview isn't truncated.
+   */
+  maxTokens?: number;
+  /**
+   * Optional per-call model override. When unset the provider uses its configured
+   * default. The dossier uses this to run the one-off synthesis on a top-tier
+   * model (e.g. Opus) without changing the interactive chat model.
+   */
+  model?: string;
+  /**
+   * Called when the model stopped because it hit the output cap (the answer is
+   * truncated). Lets the caller record/log that the result is incomplete instead
+   * of it passing silently.
+   */
+  onTruncated?: () => void;
 }
 
 export interface LLMProvider {

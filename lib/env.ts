@@ -171,6 +171,11 @@ export const env = {
     // on demand (scripts/generate-dossier.mjs), NOT in the request path.
     storePath: () =>
       readOptional("DOSSIER_PATH") ?? "/var/lib/norne-chatbot/case-dossier.json",
+    // Optional model override for the one-off dossier synthesis. Unset = a
+    // top-tier default for the active provider (Opus for Anthropic), since the
+    // dossier is high-value and runs outside the request path. The interactive
+    // chat model (ANTHROPIC_MODEL) is unaffected.
+    model: () => readOptional("DOSSIER_MODEL"),
   },
   sharepoint: {
     // Optional integration: sync a SharePoint document library into the

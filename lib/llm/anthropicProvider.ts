@@ -31,13 +31,16 @@ export function createAnthropicProvider(): LLMProvider {
 
   return {
     name: "anthropic",
-    async generateAnswer({ systemPrompt, userPrompt }: GenerateAnswerInput) {
+    async generateAnswer({ systemPrompt, userPrompt, maxTokens, model: modelOverride, onTruncated }: GenerateAnswerInput) {
       const message = await client.messages.create({
-        model,
-        max_tokens: MAX_TOKENS,
+        model: modelOverride ?? model,
+        max_tokens: maxTokens ?? MAX_TOKENS,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       });
+      // Hitting the output cap means the answer is cut off — surface it so a
+      // truncated dossier (or answer) doesn't pass as if it were complete.
+      if (message.stop_reason === "max_tokens") onTruncated?.();
       return textOf(message.content);
     },
   };

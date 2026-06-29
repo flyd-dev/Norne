@@ -22,6 +22,8 @@ export interface Dossier {
   documentCount: number;
   /** The dossier text (Markdown), produced by the LLM. */
   text: string;
+  /** True when the synthesis hit the output cap (the text may be incomplete). */
+  truncated?: boolean;
 }
 
 const DOSSIER_DOC_ID = "dossier";
