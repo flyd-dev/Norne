@@ -67,11 +67,21 @@ function toAnthropicMessages(
   return out;
 }
 
+/**
+ * Tool schemas as Claude tools. The tool set is static, so a single
+ * `cache_control` breakpoint on the LAST tool caches every tool schema as one
+ * prefix block — reused across the up-to-6 model round-trips in a turn (and
+ * across turns within the 5-min ephemeral TTL). Tools render before the system
+ * prompt in Anthropic's cache prefix, so this is the stable base of the prefix.
+ */
 function toAnthropicTools(tools: AgentToolSchema[]): Anthropic.Messages.Tool[] {
-  return tools.map((t) => ({
+  return tools.map((t, i) => ({
     name: t.name,
     description: t.description,
     input_schema: t.parameters as Anthropic.Messages.Tool.InputSchema,
+    ...(i === tools.length - 1
+      ? { cache_control: { type: "ephemeral" as const } }
+      : {}),
   }));
 }
 
@@ -85,7 +95,10 @@ export function createAnthropicAgentModel(): AgentModel {
       const response = await client.messages.create({
         model,
         max_tokens: MAX_TOKENS,
-        system,
+        // System prompt as a cached content block: it is identical across every
+        // step of a turn (and only changes when the appended date rolls over), so
+        // caching it bills the ~prefix at ~0.1x on steps 2+ instead of full price.
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         messages: toAnthropicMessages(messages),
         ...(tools.length > 0 ? { tools: toAnthropicTools(tools) } : {}),
       });

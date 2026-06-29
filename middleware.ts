@@ -19,11 +19,17 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  // Lås alt unntatt: login-siden, login-API-et, admin-API-et (egne bearer-token-
-  // ruter — maskin-endepunkter som brukes av scripts/cron, ikke nettleseren, og
-  // som er beskyttet av ADMIN_UPLOAD_TOKEN uavhengig av cookie-låsen), Next.js
-  // sine interne filer, og alle statiske filer (alt med et punktum, f.eks. png).
+  // Lås alt unntatt: login-siden, login-API-et, admin-API-et og cron-API-et (egne
+  // bearer-token-ruter — maskin-endepunkter som brukes av scripts/Vercel Cron,
+  // ikke nettleseren, og som er beskyttet av ADMIN_UPLOAD_TOKEN / CRON_SECRET
+  // uavhengig av cookie-låsen), Next.js sine interne filer, og alle statiske
+  // filer (alt med et punktum, f.eks. png).
+  //
+  // VIKTIG: `api/cron` MÅ stå her. Uten unntaket fanger cookie-låsen Vercel Cron
+  // sitt GET-kall (det har bare `Authorization: Bearer <CRON_SECRET>`, ingen
+  // cookie) og redirecter til /login, slik at nattlig synk + dossier-regenerering
+  // aldri kjører.
   matcher: [
-    "/((?!login|api/login|api/admin|_next/static|_next/image|.*\\..*).*)",
+    "/((?!login|api/login|api/admin|api/cron|_next/static|_next/image|.*\\..*).*)",
   ],
 };

@@ -30,6 +30,11 @@ import {
 export const runtime = "nodejs";
 // This route depends on request input and external data — never statically cache.
 export const dynamic = "force-dynamic";
+// The live path is the Opus agent loop (up to ~6 sequential model round-trips +
+// tool calls), which can exceed Vercel's 60s default and 504 mid-answer. This is
+// the primary user-facing flow, so give it an explicit budget like the other
+// heavy routes (see vercel.json). 300s is the Vercel Pro ceiling for Node fns.
+export const maxDuration = 300;
 
 const MAX_MESSAGE_LENGTH = 2000;
 /** How many recent messages we accept as follow-up context (last N). */

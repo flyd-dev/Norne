@@ -41,3 +41,7 @@ CLAUDE.md
 
 # Sample/real source workbooks used for local inspection — not committed.
 data/
+
+# local env backups (secrets)
+.env.local.bak*
+*.bak-premigration

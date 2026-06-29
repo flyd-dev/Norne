@@ -25,8 +25,9 @@ export const dynamic = "force-dynamic";
 // Pro fluid compute allows up to 800s).
 export const maxDuration = 800;
 
-/** Stop STARTING new batches past this elapsed time, leaving room to finish +
- * regenerate the dossier within maxDuration (300s). */
+/** Stop STARTING new batches past this elapsed time, leaving the rest of the
+ * 800s maxDuration to finish the in-flight batch + regenerate the dossier (one
+ * long LLM call). */
 const SYNC_TIME_BUDGET_MS = 220_000;
 /** Files per batch — bounded so a single batch comfortably fits the budget. */
 const BATCH_MAX_FILES = 50;

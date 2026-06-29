@@ -24,6 +24,12 @@ import {
 } from "@/lib/chat/endreSource";
 import type { AgentTool } from "@/lib/assistant/agent/loop";
 
+/** A project resolved from either the live Endre API or local Firebase data. */
+export type ResolvedProjectRecord = {
+  record: Record<string, unknown>;
+  source: "endre" | "firebase";
+};
+
 /** Request-scoped I/O the agent reads from (injected for testability). */
 export interface AgentDeps {
   getStructuredTables: () => Promise<StoredStructuredTable[]>;
@@ -36,6 +42,13 @@ export interface AgentDeps {
   /** The pre-synthesised whole-case overview (Nornebygg/HEYAS), or null. */
   readCaseDossier: () => Promise<string | null>;
   endreClient: EndreClient | null;
+  /**
+   * Optional per-turn memo for `resolveProjectRecord`, keyed by the normalized
+   * query. Set by the runtime (buildDeps) so several tools asking about the same
+   * project in one turn don't each re-run the Endre fan-out. Absent in unit tests
+   * (resolution just runs uncached).
+   */
+  _resolveCache?: Map<string, Promise<ResolvedProjectRecord | null>>;
 }
 
 const MAX_ROWS_PER_SHEET = 120;
@@ -51,17 +64,11 @@ function stripIds(rec: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-async function resolveProjectRecord(
+/** Find a project in local Firebase data only (no Endre call). */
+async function resolveFirebaseProject(
   query: string,
   deps: AgentDeps,
-): Promise<{ record: Record<string, unknown>; source: "endre" | "firebase" } | null> {
-  if (deps.endreClient) {
-    const endre = await buildEndreProjectContext(query, deps.endreClient, undefined, {
-      projectNumber: /^\d{3,6}$/.test(query.trim()) ? query.trim() : null,
-    });
-    const rec = endre?.context.endre_project as Record<string, unknown> | undefined;
-    if (rec) return { record: rec, source: "endre" };
-  }
+): Promise<FirestoreDoc | null> {
   const projects = await deps.getProjects();
   const q = query.trim().toLowerCase();
   const doc = projects.find(
@@ -69,7 +76,44 @@ async function resolveProjectRecord(
       String(p.project_number ?? "").trim().toLowerCase() === q ||
       String(p.project_name ?? "").trim().toLowerCase() === q,
   );
+  return doc ?? null;
+}
+
+/** Endre-first project resolution; falls back to local Firebase data. */
+async function resolveProjectRecordUncached(
+  query: string,
+  deps: AgentDeps,
+): Promise<ResolvedProjectRecord | null> {
+  if (deps.endreClient) {
+    const endre = await buildEndreProjectContext(query, deps.endreClient, undefined, {
+      projectNumber: /^\d{3,6}$/.test(query.trim()) ? query.trim() : null,
+    });
+    const rec = endre?.context.endre_project as Record<string, unknown> | undefined;
+    if (rec) return { record: rec, source: "endre" };
+  }
+  const doc = await resolveFirebaseProject(query, deps);
   return doc ? { record: doc, source: "firebase" } : null;
+}
+
+/**
+ * Resolve a project once per turn. The Endre fan-out (get_project) is expensive,
+ * and the same project is often looked up by more than one tool in a turn, so the
+ * result is memoized in `deps._resolveCache` (the promise, so concurrent lookups
+ * share one request). Uncached when no cache is supplied (unit tests).
+ */
+async function resolveProjectRecord(
+  query: string,
+  deps: AgentDeps,
+): Promise<ResolvedProjectRecord | null> {
+  const cache = deps._resolveCache;
+  if (!cache) return resolveProjectRecordUncached(query, deps);
+  const key = query.trim().toLowerCase();
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = resolveProjectRecordUncached(query, deps);
+    cache.set(key, pending);
+  }
+  return pending;
 }
 
 export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
@@ -172,9 +216,11 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
   {
     name: "read_staffing_sheets",
     description:
-      "Rådata fra bemanningsplanens ark (f.eks. «Kapasitetsanalyse», " +
-      "«Månedsbehov», «Rotasjonsplan»): kolonneoverskrifter + rader. Les og regn " +
-      "selv. Store ark er avkortet — rowCount viser totalen.",
+      "FORETRUKKET kilde for alle bemannings- og kapasitetsspørsmål: rådata fra " +
+      "bemanningsplanens ark (f.eks. «Kapasitetsanalyse», «Månedsbehov», " +
+      "«Rotasjonsplan») med kolonneoverskrifter + hele rader, så du kan regne " +
+      "selv. Bruk denne — ikke search_documents — for tall om kapasitet, timer " +
+      "og bemanning. Store ark er avkortet — rowCount viser totalen.",
     parameters: {
       type: "object",
       properties: { sheet: { type: "string", description: "Begrens til ett ark (delvis navn)." } },
@@ -207,11 +253,13 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
       required: ["project"],
     },
     async execute(args, deps) {
-      const found = await resolveProjectRecord(String(args.project ?? ""), deps);
-      if (!found || found.source !== "firebase") {
+      // Budget lines only exist for local (Firebase) projects, so resolve against
+      // Firebase directly — never trigger the Endre fan-out just to discard it.
+      const record = await resolveFirebaseProject(String(args.project ?? ""), deps);
+      if (!record) {
         return { found: false, note: "Budsjettlinjer finnes bare for lokale prosjekter." };
       }
-      const id = String(found.record.id ?? "");
+      const id = String(record.id ?? "");
       if (!id) return { found: false };
       const rows = await deps.getBudgetLines(id);
       return {
@@ -233,11 +281,12 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
       required: ["project"],
     },
     async execute(args, deps) {
-      const found = await resolveProjectRecord(String(args.project ?? ""), deps);
-      if (!found || found.source !== "firebase") {
+      // Quantities only exist for local (Firebase) projects — resolve directly.
+      const record = await resolveFirebaseProject(String(args.project ?? ""), deps);
+      if (!record) {
         return { found: false, note: "Mengder finnes bare for lokale prosjekter." };
       }
-      const id = String(found.record.id ?? "");
+      const id = String(record.id ?? "");
       if (!id) return { found: false };
       const rows = await deps.getQuantities(id);
       return {
@@ -273,7 +322,9 @@ export const AGENT_TOOLS: AgentTool<AgentDeps>[] = [
   {
     name: "search_documents",
     description:
-      "Søk i opplastede dokumenter (fritekst i PDF/Word/Excel). Bruk for " +
+      "Søk i fritekst i opplastede dokumenter (PDF/Word, og fritekstceller i " +
+      "Excel). Gir bare avkortede, rangerte tekstutdrag — for tallmessig " +
+      "bemanning/kapasitet bruk read_staffing_sheets i stedet. Bruk denne for " +
       "dokumentinnhold som ikke er strukturerte tabeller.",
     parameters: {
       type: "object",

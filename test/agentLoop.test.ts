@@ -43,6 +43,7 @@ describe("runAgent", () => {
     expect(r.answer).toBe("Verdien er 42.");
     expect(r.toolRuns).toEqual([{ tool: "get_value", ok: true }]);
     expect(r.hitStepLimit).toBe(false);
+    expect(r.modelError).toBe(false);
   });
 
   it("handles an unknown tool without throwing", async () => {
@@ -79,10 +80,17 @@ describe("runAgent", () => {
     expect(r.toolRuns.length).toBe(3);
   });
 
-  it("survives a model that throws (returns a safe answer)", async () => {
+  it("survives a model that throws (returns a safe answer), and reports it", async () => {
+    const errors: unknown[] = [];
     const model: AgentModel = { step: async () => { throw new Error("api down"); } };
-    const r = await runAgent({ model, system: "s", userMessage: "?", tools: [tool], deps: { value: 1 } });
+    const r = await runAgent({
+      model, system: "s", userMessage: "?", tools: [tool], deps: { value: 1 },
+      onStepError: (e) => errors.push(e),
+    });
     expect(r.answer).toBeTruthy();
     expect(r.toolRuns).toEqual([]);
+    // The failure is observable, not silently swallowed.
+    expect(r.modelError).toBe(true);
+    expect(errors).toHaveLength(1);
   });
 });

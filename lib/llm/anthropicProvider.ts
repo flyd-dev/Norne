@@ -21,7 +21,12 @@ function textOf(content: Anthropic.Messages.ContentBlock[]): string {
 }
 
 export function createAnthropicProvider(): LLMProvider {
-  const client = new Anthropic({ apiKey: env.anthropic.apiKey() });
+  // Generous explicit timeout: this provider also drives the case-dossier
+  // synthesis — one long single call inside a long-running route (up to 800s).
+  // Bound it under that ceiling so a hung call surfaces as a catchable error
+  // rather than a silent function-level timeout. Interactive answers finish in
+  // seconds, so this never affects normal latency.
+  const client = new Anthropic({ apiKey: env.anthropic.apiKey(), timeout: 540_000 });
   const model = env.anthropic.model();
 
   return {
