@@ -45,11 +45,15 @@ interface ChatError {
   requestId?: string;
 }
 
+// Starter chips. These are the bot's first impression, so they showcase its
+// BREADTH — general work help (the default mode), staffing/capacity, projects,
+// and the chart of accounts — not just repeated lookups of one project number.
 const EXAMPLES = [
+  "Lag en sjekkliste for oppstart av et byggeprosjekt",
+  "Har vi ledig kapasitet i høst?",
   "Hvilke prosjekter finnes?",
   "Oppsummer prosjekt 7100",
-  "Hvilke budsjettlinjer finnes på prosjekt 7100?",
-  "Hvilke mengder finnes på prosjekt 7100?",
+  "Hvilken konto fører jeg verneutstyr på?",
 ];
 
 /**
@@ -463,7 +467,7 @@ export default function Chat() {
           {isEmpty && (
             <div className="empty">
               <h2>Norne Assistent</h2>
-              <p>Still et spørsmål om prosjekter, dokumenter eller mengder.</p>
+              <p>Spør om prosjekter, bemanning, dokumenter og saken — eller få hjelp med tekst og oppgaver.</p>
               <div className="chips">
                 {EXAMPLES.map((q) => (
                   <button

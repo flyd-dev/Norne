@@ -11,14 +11,72 @@
  */
 
 import "server-only";
+import { env } from "@/lib/env";
 import { getAllChunks } from "@/lib/documents/store";
 import { getLLMProvider } from "@/lib/llm";
 import { writeDossier, type Dossier } from "@/lib/dossier/store";
 
 /** Total character budget for the synthesis input (~150k tokens of excerpts). */
 const TOTAL_BUDGET_CHARS = 600_000;
-/** Hard per-document cap so one huge file can't crowd out the rest. */
-const PER_DOC_CAP_CHARS = 4_000;
+/** Floor so every document is represented, even on a large corpus. */
+const PER_DOC_MIN_CHARS = 400;
+/**
+ * Per-document ceiling so one huge file can't crowd out the rest. Raised from 4k:
+ * on a small/medium corpus each document now gets a substantial excerpt (and the
+ * full budget is actually used) instead of only its first ~1k tokens.
+ */
+const PER_DOC_CAP_CHARS = 40_000;
+/**
+ * Output cap for the dossier synthesis. The interactive-chat default (~4k tokens)
+ * truncates a thorough multi-section legal overview; this leaves room for the
+ * full structure (kjerne, parter, tidslinje, styrker/svakheter, …).
+ */
+const DOSSIER_MAX_TOKENS = 16_000;
+
+/**
+ * Model for the one-off dossier synthesis: an explicit DOSSIER_MODEL override, or
+ * a top-tier default for the active provider (Opus on Anthropic — the chat
+ * default is Sonnet). Outside the request path, so quality beats cost. Other
+ * providers keep their configured model (the out-of-band script sets its own).
+ */
+function dossierModel(): string | undefined {
+  const explicit = env.dossier.model();
+  if (explicit) return explicit;
+  return env.llm.provider() === "anthropic" ? "claude-opus-4-8" : undefined;
+}
+
+/**
+ * Pick up to `budget` chars from one document's chunks. If the whole document
+ * fits, it's included in chunk order. If not, chunks are sampled EVENLY across
+ * the document (start → middle → end) instead of taking only the opening — so the
+ * excerpt represents the whole file (where claims, amounts and signatures often
+ * live), not just its first page. Omitted spans are marked with "…".
+ */
+export function selectExcerpt(
+  chunks: { i: number; text: string }[],
+  budget: number,
+): string {
+  const ordered = [...chunks].sort((a, b) => a.i - b.i);
+  const whole = ordered.map((c) => c.text).join("\n");
+  if (whole.length <= budget) return whole.trim();
+
+  const avg = whole.length / ordered.length;
+  const want = Math.max(1, Math.min(ordered.length, Math.floor(budget / Math.max(1, avg))));
+  const step = ordered.length / want;
+  const picked: string[] = [];
+  const seen = new Set<number>();
+  let used = 0;
+  for (let k = 0; k < want; k++) {
+    const idx = Math.min(ordered.length - 1, Math.floor(k * step));
+    if (seen.has(idx)) continue;
+    seen.add(idx);
+    const t = ordered[idx].text;
+    if (used + t.length > budget && picked.length) break;
+    picked.push(t);
+    used += t.length + 1;
+  }
+  return picked.join("\n…\n").slice(0, budget).trim();
+}
 
 const DOSSIER_SYSTEM = `Du lager et grundig, gjennomarbeidet SAKSDOSSIER for Nornebygg- og HEYAS-siden (Hausvik Energy Yard AS, konsortiet Nornebygg/Fjellbygg er en del av) ut fra utdrag av alle sakens dokumenter. Du står på lag med dette teamet — målet er at de skal ha en dyp og realistisk forståelse av saken. Skriv på norsk, og bygg KUN på det som faktisk står i utdragene.
 
@@ -60,17 +118,12 @@ function buildInput(
   // Share the budget across documents, capped per document.
   const perDoc = Math.min(
     PER_DOC_CAP_CHARS,
-    Math.max(400, Math.floor(TOTAL_BUDGET_CHARS / docCount)),
+    Math.max(PER_DOC_MIN_CHARS, Math.floor(TOTAL_BUDGET_CHARS / docCount)),
   );
 
   const parts: string[] = [];
   for (const { name, chunks: docChunks } of byDoc.values()) {
-    const text = docChunks
-      .sort((a, b) => a.i - b.i)
-      .map((c) => c.text)
-      .join("\n")
-      .slice(0, perDoc)
-      .trim();
+    const text = selectExcerpt(docChunks, perDoc);
     if (text) parts.push(`### ${name}\n${text}`);
   }
   return { input: parts.join("\n\n"), documentCount: docCount };
@@ -86,20 +139,40 @@ export async function generateDossier(): Promise<Dossier | null> {
   if (documentCount === 0) return null;
 
   const provider = getLLMProvider();
+  let truncated = false;
   const text = (
     await provider.generateAnswer({
       systemPrompt: DOSSIER_SYSTEM,
       userPrompt: `DOKUMENTUTDRAG:\n\n${input}`,
       context: {},
+      maxTokens: DOSSIER_MAX_TOKENS,
+      model: dossierModel(),
+      onTruncated: () => {
+        truncated = true;
+      },
     })
   ).trim();
 
   if (!text) return null;
 
+  if (truncated) {
+    // The synthesis hit the output cap — the dossier may be missing its final
+    // sections. Surface it (and persist the flag) instead of failing silently.
+    console.warn(
+      JSON.stringify({
+        evt: "dossier_truncated",
+        documentCount,
+        maxTokens: DOSSIER_MAX_TOKENS,
+        note: "Dossier hit the output cap; consider raising DOSSIER_MAX_TOKENS.",
+      }),
+    );
+  }
+
   const dossier: Dossier = {
     generatedAt: new Date().toISOString(),
     documentCount,
     text,
+    ...(truncated ? { truncated: true } : {}),
   };
   await writeDossier(dossier);
   return dossier;

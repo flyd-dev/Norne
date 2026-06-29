@@ -171,6 +171,11 @@ export const env = {
     // on demand (scripts/generate-dossier.mjs), NOT in the request path.
     storePath: () =>
       readOptional("DOSSIER_PATH") ?? "/var/lib/norne-chatbot/case-dossier.json",
+    // Optional model override for the one-off dossier synthesis. Unset = a
+    // top-tier default for the active provider (Opus for Anthropic), since the
+    // dossier is high-value and runs outside the request path. The interactive
+    // chat model (ANTHROPIC_MODEL) is unaffected.
+    model: () => readOptional("DOSSIER_MODEL"),
   },
   sharepoint: {
     // Optional integration: sync a SharePoint document library into the
@@ -343,6 +348,19 @@ export function validateEnv(): EnvValidation {
     );
   }
 
+  // --- Site password lock (production only) --------------------------------
+  // The whole-site lock has no built-in production default; without these vars it
+  // fails closed (lib/site-auth.ts). Surface the misconfiguration loudly at the
+  // request edge too. In dev/test, placeholders are used, so don't require them.
+  if (process.env.NODE_ENV === "production") {
+    if (!readOptional("SITE_AUTH_PASSWORD")) {
+      missing.push("SITE_AUTH_PASSWORD (required in production)");
+    }
+    if (!readOptional("SITE_AUTH_SECRET")) {
+      missing.push("SITE_AUTH_SECRET (required in production)");
+    }
+  }
+
   if (missing.length > 0) {
     errors.unshift(`Missing required variable(s): ${missing.join(", ")}.`);
   }
@@ -366,6 +384,22 @@ export function validateEnv(): EnvValidation {
     warnings.push(
       `Using local Ollama LLM provider (${env.ollama.baseUrl()}). Ensure the ` +
         "server is running and the model is pulled.",
+    );
+  }
+  // The embeddings provider defaults to "ollama", but a cloud (serverless) deploy
+  // can't reach a localhost Ollama — that silently breaks semantic search. Warn on
+  // the likely-misconfigured combination so it doesn't fail invisibly.
+  if (
+    env.storeBackend() === "cloud" &&
+    env.rag.embeddingsProvider() === "ollama" &&
+    /localhost|127\.0\.0\.1/.test(env.ollama.baseUrl())
+  ) {
+    warnings.push(
+      "EMBEDDINGS_PROVIDER is 'ollama' (the default) with a localhost " +
+        "OLLAMA_BASE_URL while STORE_BACKEND=cloud — a serverless deploy cannot " +
+        "reach a local Ollama, so semantic search will silently fail. Set " +
+        "EMBEDDINGS_PROVIDER=voyage (recommended) or point OLLAMA_BASE_URL at a " +
+        "reachable host.",
     );
   }
   return { mode, llmProvider, warnings };

@@ -11,20 +11,31 @@ vi.mock("@/lib/documents/store", () => ({
 
 const llm = vi.hoisted(() => ({
   lastUserPrompt: "",
+  lastMaxTokens: undefined as number | undefined,
+  lastModel: undefined as string | undefined,
+  truncate: false,
   reply: "## Parter\n- Nornebygg\n- Windport",
 }));
 vi.mock("@/lib/llm", () => ({
   getLLMProvider: () => ({
     name: "anthropic",
-    generateAnswer: async (input: { userPrompt: string }) => {
+    generateAnswer: async (input: {
+      userPrompt: string;
+      maxTokens?: number;
+      model?: string;
+      onTruncated?: () => void;
+    }) => {
       llm.lastUserPrompt = input.userPrompt;
+      llm.lastMaxTokens = input.maxTokens;
+      llm.lastModel = input.model;
+      if (llm.truncate) input.onTruncated?.();
       return llm.reply;
     },
   }),
 }));
 
 import { readDossier, writeDossier } from "@/lib/dossier/store";
-import { generateDossier } from "@/lib/dossier/generate";
+import { generateDossier, selectExcerpt } from "@/lib/dossier/generate";
 
 let dir: string;
 
@@ -37,6 +48,9 @@ beforeEach(() => {
   process.env.DOSSIER_PATH = join(dir, "case-dossier.json");
   store.chunks = [];
   llm.lastUserPrompt = "";
+  llm.lastMaxTokens = undefined;
+  llm.lastModel = undefined;
+  llm.truncate = false;
 });
 
 afterEach(() => {
@@ -85,5 +99,46 @@ describe("generateDossier", () => {
   it("returns null when there are no documents", async () => {
     store.chunks = [];
     expect(await generateDossier()).toBeNull();
+  });
+
+  it("synthesises on a top-tier model with a raised output cap", async () => {
+    store.chunks = [chunk("d1", "Avtale.pdf", 0, "tekst")];
+    await generateDossier();
+    // Output cap is well above the ~4k chat default so a long dossier isn't cut.
+    expect(llm.lastMaxTokens ?? 0).toBeGreaterThanOrEqual(16_000);
+    // Anthropic default for the dossier is Opus (chat default is Sonnet).
+    expect(llm.lastModel).toBe("claude-opus-4-8");
+  });
+
+  it("flags and persists a truncated dossier", async () => {
+    store.chunks = [chunk("d1", "Avtale.pdf", 0, "tekst")];
+    llm.truncate = true;
+    const dossier = await generateDossier();
+    expect(dossier?.truncated).toBe(true);
+    expect((await readDossier())?.truncated).toBe(true);
+  });
+});
+
+describe("selectExcerpt", () => {
+  it("returns the whole document in chunk order when it fits", () => {
+    const out = selectExcerpt(
+      [
+        { i: 1, text: "andre" },
+        { i: 0, text: "første" },
+      ],
+      1000,
+    );
+    expect(out).toBe("første\nandre");
+  });
+
+  it("samples across the whole document (not just the start) when over budget", () => {
+    // 10 chunks of 100 chars (each tagged with its index digit); a 300-char
+    // budget would, with a leading slice, only ever reach chunks 0–2.
+    const chunks = Array.from({ length: 10 }, (_, i) => ({ i, text: `${i}`.padEnd(100, "x") }));
+    const out = selectExcerpt(chunks, 300);
+    expect(out.length).toBeLessThanOrEqual(300);
+    expect(out).toContain("…"); // gap marker → spread path, not a contiguous slice
+    // It reached a chunk beyond the opening 0–2 (a leading slice never would).
+    expect(/[3-9]/.test(out)).toBe(true);
   });
 });

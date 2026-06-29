@@ -21,18 +21,26 @@ function textOf(content: Anthropic.Messages.ContentBlock[]): string {
 }
 
 export function createAnthropicProvider(): LLMProvider {
-  const client = new Anthropic({ apiKey: env.anthropic.apiKey() });
+  // Generous explicit timeout: this provider also drives the case-dossier
+  // synthesis — one long single call inside a long-running route (up to 800s).
+  // Bound it under that ceiling so a hung call surfaces as a catchable error
+  // rather than a silent function-level timeout. Interactive answers finish in
+  // seconds, so this never affects normal latency.
+  const client = new Anthropic({ apiKey: env.anthropic.apiKey(), timeout: 540_000 });
   const model = env.anthropic.model();
 
   return {
     name: "anthropic",
-    async generateAnswer({ systemPrompt, userPrompt }: GenerateAnswerInput) {
+    async generateAnswer({ systemPrompt, userPrompt, maxTokens, model: modelOverride, onTruncated }: GenerateAnswerInput) {
       const message = await client.messages.create({
-        model,
-        max_tokens: MAX_TOKENS,
+        model: modelOverride ?? model,
+        max_tokens: maxTokens ?? MAX_TOKENS,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       });
+      // Hitting the output cap means the answer is cut off — surface it so a
+      // truncated dossier (or answer) doesn't pass as if it were complete.
+      if (message.stop_reason === "max_tokens") onTruncated?.();
       return textOf(message.content);
     },
   };

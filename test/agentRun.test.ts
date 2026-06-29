@@ -74,4 +74,23 @@ describe("runAgentTurn (scripted model)", () => {
     expect(r.answer).toBe("Hei!");
     expect(r.diagnostics?.toolsRun ?? []).toEqual([]);
   });
+
+  it("injects today's date into the system prompt so relative time resolves", async () => {
+    let seenSystem = "";
+    const model: AgentModel = {
+      step: async ({ system }) => {
+        seenSystem = system;
+        return { content: "ok" };
+      },
+    };
+    await runAgentTurn("hva er kapasiteten ut året?", "req", [], model);
+    expect(seenSystem).toContain("Dagens dato er");
+    expect(seenSystem).toMatch(/ISO \d{4}-\d{2}-\d{2}/);
+  });
+
+  it("surfaces a transient model failure in diagnostics (not silently swallowed)", async () => {
+    const model: AgentModel = { step: async () => { throw new Error("overloaded"); } };
+    const r = await runAgentTurn("hei", "req", [], model);
+    expect(r.diagnostics?.fallbackReasons).toContain("agent_model_error");
+  });
 });

@@ -17,6 +17,8 @@ import type { GenerateAnswerInput, LLMProvider } from "@/lib/llm/types";
 
 interface OllamaChatResponse {
   message?: { content?: string };
+  /** "length" when generation stopped at num_predict (truncated). */
+  done_reason?: string;
   error?: string;
 }
 
@@ -31,14 +33,15 @@ export function createOllamaProvider(): LLMProvider {
 
   return {
     name: "ollama",
-    async generateAnswer({ systemPrompt, userPrompt }: GenerateAnswerInput) {
+    async generateAnswer({ systemPrompt, userPrompt, maxTokens, model: modelOverride, onTruncated }: GenerateAnswerInput) {
       const res = await fetch(`${baseUrl}/api/chat`, {
         method: "POST",
         headers,
         body: JSON.stringify({
-          model,
+          model: modelOverride ?? model,
           stream: false,
-          options: { temperature: 0.2 },
+          // num_predict is Ollama's output-token cap; omit to keep the default.
+          options: { temperature: 0.2, ...(maxTokens ? { num_predict: maxTokens } : {}) },
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
@@ -55,6 +58,7 @@ export function createOllamaProvider(): LLMProvider {
         // Surface a terse error; the model/server detail is logged by type only.
         throw new Error("Ollama returned an error response.");
       }
+      if (data.done_reason === "length") onTruncated?.();
       return (data.message?.content ?? "").trim();
     },
   };

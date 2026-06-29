@@ -65,6 +65,12 @@ export interface AgentRunInput<Deps> {
   deps: Deps;
   /** Max model round-trips before forcing a final answer. */
   maxSteps?: number;
+  /**
+   * Called when a model round-trip throws (transient 429/529/timeout, etc.). The
+   * loop still degrades to a safe answer, but this gives the caller a hook to log
+   * the failure by type so it is observable instead of silently swallowed.
+   */
+  onStepError?: (error: unknown) => void;
 }
 
 export interface AgentRunResult {
@@ -75,6 +81,8 @@ export interface AgentRunResult {
   sources: string[];
   /** True when the step budget was hit before a final answer. */
   hitStepLimit: boolean;
+  /** True when at least one model round-trip threw and was degraded to NO_ANSWER. */
+  modelError: boolean;
 }
 
 /** Pull source label(s) off a tool result: a `sources` array or a `source` string. */
@@ -107,13 +115,15 @@ export async function runAgent<Deps>(
   ];
   const toolRuns: { tool: string; ok: boolean }[] = [];
   const sources = new Set<string>();
+  let modelError = false;
 
   for (let i = 0; i < maxSteps; i++) {
-    const step = await safeStep(input.model, {
-      system: input.system,
-      messages,
-      tools: schemas,
-    });
+    const { step, errored } = await safeStep(
+      input.model,
+      { system: input.system, messages, tools: schemas },
+      input.onStepError,
+    );
+    if (errored) modelError = true;
 
     if (step.toolCalls && step.toolCalls.length > 0) {
       messages.push({ role: "assistant", toolCalls: step.toolCalls });
@@ -150,31 +160,39 @@ export async function runAgent<Deps>(
       toolRuns,
       sources: [...sources],
       hitStepLimit: false,
+      modelError,
     };
   }
 
   // Step budget exhausted: ask once more WITHOUT tools to force a final answer.
-  const final = await safeStep(input.model, {
-    system: input.system,
-    messages,
-    tools: [],
-  });
+  const { step: final, errored } = await safeStep(
+    input.model,
+    { system: input.system, messages, tools: [] },
+    input.onStepError,
+  );
+  if (errored) modelError = true;
   return {
     answer: final.content?.trim() || NO_ANSWER,
     toolRuns,
     sources: [...sources],
     hitStepLimit: true,
+    modelError,
   };
 }
 
 async function safeStep(
   model: AgentModel,
   input: { system: string; messages: AgentMessage[]; tools: AgentToolSchema[] },
-): Promise<AgentStep> {
+  onError?: (error: unknown) => void,
+): Promise<{ step: AgentStep; errored: boolean }> {
   try {
-    return await model.step(input);
-  } catch {
-    return { content: NO_ANSWER };
+    return { step: await model.step(input), errored: false };
+  } catch (error) {
+    // The loop still degrades to a safe answer, but a swallowed error is invisible
+    // — hand it to the caller (by type only) so a transient model failure is
+    // observable in the logs rather than mistaken for a clean answer.
+    onError?.(error);
+    return { step: { content: NO_ANSWER }, errored: true };
   }
 }
 
