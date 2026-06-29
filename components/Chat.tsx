@@ -189,14 +189,14 @@ function MessageFeedback({ message }: { message: ChatMessage }) {
             onClick={() => void send("good")}
             disabled={busy}
           >
-            👍 Bra svar
+            Bra svar
           </button>
           <button
             className="feedback-btn"
             onClick={() => setState("correcting")}
             disabled={busy}
           >
-            👎 Dårlig svar
+            Dårlig svar
           </button>
         </div>
       )}
@@ -454,14 +454,6 @@ export default function Chat() {
             Tøm chat
           </button>
         </header>
-
-        <div className="divider-band" aria-hidden="true">
-          <div className="logo-divider">
-            <span className="ld-line" />
-            <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
-            <span className="ld-line" />
-          </div>
-        </div>
 
         <div className="messages" ref={listRef} aria-live="polite">
           {isEmpty && (

@@ -236,14 +236,6 @@ export default function AdminDocuments() {
           </button>
         </header>
 
-        <div className="divider-band" aria-hidden="true">
-          <div className="logo-divider">
-            <span className="ld-line" />
-            <img className="ld-mark" src="/norne-logo-gold.png" alt="" />
-            <span className="ld-line" />
-          </div>
-        </div>
-
         <form onSubmit={upload} className="upload-form">
           <input ref={fileRef} type="file" accept={ACCEPT} aria-label="Velg fil" />
           <button type="submit" className="send-btn" disabled={busy}>
@@ -337,7 +329,7 @@ export default function AdminDocuments() {
                               : "fb-rating-bad"
                           }
                         >
-                          {f.rating === "good" ? "👍 Bra" : "👎 Dårlig"}
+                          {f.rating === "good" ? "Bra" : "Dårlig"}
                         </span>
                       </td>
                       <td>{f.route ?? "—"}</td>
