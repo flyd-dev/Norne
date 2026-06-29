@@ -893,12 +893,95 @@ body {
 }
 
 /* ---------- Login (full-site password gate) ---------- */
+.login-app {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  /* Subtle concrete depth so the centered card doesn't float in a flat void */
+  background:
+    radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(205, 157, 58, 0.06),
+      transparent 60%
+    ),
+    radial-gradient(100% 70% at 50% 120%, rgba(22, 22, 22, 0.05), transparent 55%),
+    var(--bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 392px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* Dark industrial header band — mirrors the chat app header */
+.login-head {
+  background: var(--header-bg);
+  border-bottom: 3px solid var(--accent);
+  padding: 30px 28px 24px;
+  text-align: center;
+}
+
+.login-logo {
+  display: block;
+  height: 42px;
+  width: auto;
+  margin: 0 auto;
+}
+
+.login-kicker {
+  margin: 13px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: #b6afa3;
+}
+
+.login-body {
+  padding: 26px 28px 24px;
+}
+
+.login-body h1 {
+  margin: 0 0 4px;
+  font-size: 19px;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.login-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin: 18px 0 4px;
+  gap: 14px;
+  margin: 20px 0 4px;
   text-align: left;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .login-form input[type="text"],
@@ -911,6 +994,11 @@ body {
   font-family: inherit;
   background: var(--panel);
   color: var(--ink-2);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.login-form input::placeholder {
+  color: #a89f93;
 }
 
 .login-form input:focus {
@@ -922,12 +1010,23 @@ body {
 .login-submit {
   width: 100%;
   padding: 13px 22px;
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
 .login-error {
-  margin: 4px 0 0;
+  margin: 16px 0 0;
   text-align: left;
+}
+
+.login-foot {
+  margin: 20px 0 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: 0.7;
 }
 
 /* ---------- Answer feedback ---------- */

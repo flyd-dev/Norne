@@ -34,39 +34,47 @@ export default function LoginForm({ next }: { next: string }) {
   }
 
   return (
-    <div className="admin-app">
-      <div className="admin-card">
-        <div className="admin-gate">
+    <div className="login-app">
+      <div className="login-card">
+        <div className="login-head">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            className="gate-logo"
+            className="login-logo"
             src="/norne-logo-gold.png"
             alt="Norne"
           />
+          <p className="login-kicker">Intern prosjektassistent</p>
+        </div>
+
+        <div className="login-body">
           <h1>Logg inn</h1>
-          <p>Tilgang krever brukernavn og passord.</p>
+          <p className="login-lead">Tilgang krever brukernavn og passord.</p>
 
           {error ? <div className="error login-error">{error}</div> : null}
 
           <form className="login-form" onSubmit={onSubmit}>
-            <input
-              type="text"
-              placeholder="Brukernavn"
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
-              autoComplete="username"
-              autoCapitalize="none"
-              autoFocus
-              required
-            />
-            <input
-              type="password"
-              placeholder="Passord"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
+            <label className="login-field">
+              <span className="login-label">Brukernavn</span>
+              <input
+                type="text"
+                value={user}
+                onChange={(e) => setUser(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoFocus
+                required
+              />
+            </label>
+            <label className="login-field">
+              <span className="login-label">Passord</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
             <button
               type="submit"
               className="send-btn login-submit"
@@ -75,6 +83,8 @@ export default function LoginForm({ next }: { next: string }) {
               {loading ? "Logger inn…" : "Logg inn"}
             </button>
           </form>
+
+          <p className="login-foot">Robust. Presis. Tilstede.</p>
         </div>
       </div>
     </div>
